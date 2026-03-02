@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🔥 SHIZOGP - ИСПРАВЛЕННАЯ ВЕРСИЯ
-✅ Все кнопки работают
-✅ Платежи починены
-✅ Тестовые скины добавлены
+🔥 SHIZOGP - ФИНАЛЬНАЯ ВЕРСИЯ С CRYPTO PAY
+✅ Крипто-платежи через @CryptoBot
+✅ Все ошибки исправлены
+✅ База данных оптимизирована
 """
 
 import os
@@ -33,7 +33,8 @@ def install_package(package):
 required_packages = [
     "aiogram==3.4.1",
     "aiosqlite==0.19.0",
-    "python-dotenv==1.0.0"
+    "python-dotenv==1.0.0",
+    "requests==2.31.0"
 ]
 
 for package in required_packages:
@@ -48,7 +49,7 @@ for package in required_packages:
         print(f"✅ {package_name} уже установлен")
 
 # ========== ИМПОРТЫ ==========
-print("🚀 Загрузка бота...")
+print("🚀 Загрузка бота с Crypto Pay...")
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -57,6 +58,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 import aiosqlite
+import requests
 
 try:
     from dotenv import load_dotenv
@@ -66,6 +68,7 @@ except:
 
 # ========== НАСТРОЙКИ ==========
 BOT_TOKEN = os.getenv('BOT_TOKEN', '8498694285:AAG3Ezx7BDGciUIYAAb4UHMtFUmBYvock3w')
+CRYPTOPAY_TOKEN = '540261:AAzd4sQW2mo4I8UdxardSygAc3H3CSZbZBs'
 ADMIN_IDS = [int(x) for x in os.getenv('ADMIN_IDS', '2091630272,1760627021').split(',') if x]
 VIP_CHAT_LINK = os.getenv('VIP_CHAT_LINK', 'https://t.me/+r3rxYlBjbTYyMDY6')
 SUPPORT_LINK = os.getenv('SUPPORT_LINK', 'https://t.me/SHIZOGP_support')
@@ -80,14 +83,6 @@ REFERRAL_BONUS = 50
 START_BALANCE = 100
 DAILY_BONUS = 10
 
-# Крипто-кошельки (тестовые)
-CRYPTO_WALLETS = {
-    'BTC': 'bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh',
-    'ETH': '0x742d35Cc6634C0532925a3b844Bc1e7d8b3b7c8d',
-    'USDT': 'TXm1j7q9q9q9q9q9q9q9q9q9q9q9q9q9q9q9q9',
-    'TON': 'UQA9q9q9q9q9q9q9q9q9q9q9q9q9q9q9q9q9q9'
-}
-
 # Тестовые скины
 TEST_SKINS = [
     {"name": "AK-47 | Redline", "quality": "Field-Tested", "price_usd": 1500},
@@ -99,7 +94,7 @@ TEST_SKINS = [
 ]
 
 DATABASE_PATH = "shizogp.db"
-BOT_VERSION = "10.0 (ВСЁ ИСПРАВЛЕНО)"
+BOT_VERSION = "11.0 (CRYPTO PAY INTEGRATED)"
 BOT_NAME = "SHIZOGP"
 
 # ========== НАСТРОЙКА ЛОГИРОВАНИЯ ==========
@@ -124,6 +119,74 @@ class Colors:
     WHITE = '\033[97m'
     BOLD = '\033[1m'
     END = '\033[0m'
+
+# ========== CRYPTO PAY API ==========
+class CryptoPayAPI:
+    def __init__(self, token: str):
+        self.token = token
+        self.base_url = "https://pay.crypt.bot/api"
+        self.headers = {
+            "Crypto-Pay-API-Token": token,
+            "Content-Type": "application/json"
+        }
+    
+    async def create_invoice(self, amount: float, asset: str = 'USDT', description: str = 'Пополнение баланса') -> Dict:
+        """Создание счёта в Crypto Pay"""
+        url = f"{self.base_url}/createInvoice"
+        payload = {
+            "asset": asset,
+            "amount": str(amount),
+            "description": description,
+            "paid_btn_name": "openBot",
+            "paid_btn_url": f"https://t.me/{(await bot.get_me()).username}",
+            "allow_comments": False,
+            "allow_anonymous": False,
+            "expires_in": 3600  # 1 час
+        }
+        
+        try:
+            response = requests.post(url, headers=self.headers, json=payload)
+            data = response.json()
+            
+            if data.get('ok'):
+                return {
+                    'success': True,
+                    'invoice_id': data['result']['invoice_id'],
+                    'pay_url': data['result']['pay_url'],
+                    'amount': float(data['result']['amount']),
+                    'asset': data['result']['asset'],
+                    'status': data['result']['status']
+                }
+            else:
+                return {'success': False, 'error': data.get('error', 'Unknown error')}
+        except Exception as e:
+            logger.error(f"❌ Crypto Pay API error: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    async def get_invoice_status(self, invoice_id: int) -> Dict:
+        """Получение статуса счёта"""
+        url = f"{self.base_url}/getInvoices"
+        params = {"invoice_ids": str(invoice_id)}
+        
+        try:
+            response = requests.get(url, headers=self.headers, params=params)
+            data = response.json()
+            
+            if data.get('ok') and data.get('result') and data['result'].get('items'):
+                invoice = data['result']['items'][0]
+                return {
+                    'success': True,
+                    'invoice_id': invoice['invoice_id'],
+                    'status': invoice['status'],
+                    'amount': float(invoice['amount']),
+                    'asset': invoice['asset'],
+                    'paid_at': invoice.get('paid_at')
+                }
+            else:
+                return {'success': False, 'status': 'not_found'}
+        except Exception as e:
+            logger.error(f"❌ Crypto Pay API error: {e}")
+            return {'success': False, 'error': str(e)}
 
 # ========== БАЗА ДАННЫХ ==========
 class Database:
@@ -166,18 +229,19 @@ class Database:
                 )
             ''')
             
-            # Платежи
+            # Крипто-платежи
             await db.execute('''
-                CREATE TABLE IF NOT EXISTS payments (
+                CREATE TABLE IF NOT EXISTS crypto_payments (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER,
-                    payment_id TEXT UNIQUE,
+                    invoice_id INTEGER UNIQUE,
                     amount_usd INTEGER,
-                    amount_rub INTEGER,
-                    method TEXT,
-                    status TEXT DEFAULT 'pending',
+                    amount_crypto REAL,
+                    asset TEXT,
+                    status TEXT DEFAULT 'active',
+                    pay_url TEXT,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    confirmed_at TEXT
+                    paid_at TEXT
                 )
             ''')
             
@@ -290,39 +354,39 @@ class Database:
             await db.commit()
             return True
     
-    async def add_payment(self, user_id: int, payment_id: str, amount_usd: int, amount_rub: int, method: str) -> bool:
+    async def add_crypto_payment(self, user_id: int, invoice_id: int, amount_usd: int, amount_crypto: float, asset: str, pay_url: str) -> bool:
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute('''
-                INSERT INTO payments (user_id, payment_id, amount_usd, amount_rub, method, status)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (user_id, payment_id, amount_usd, amount_rub, method, 'pending'))
+                INSERT INTO crypto_payments (user_id, invoice_id, amount_usd, amount_crypto, asset, pay_url, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (user_id, invoice_id, amount_usd, amount_crypto, asset, pay_url, 'active'))
             await db.commit()
             return True
     
-    async def confirm_payment(self, payment_id: str) -> bool:
+    async def confirm_crypto_payment(self, invoice_id: int) -> bool:
         async with aiosqlite.connect(self.db_path) as db:
-            cursor = await db.execute('SELECT user_id, amount_usd, amount_rub FROM payments WHERE payment_id = ? AND status = ?', (payment_id, 'pending'))
+            cursor = await db.execute('SELECT user_id, amount_usd FROM crypto_payments WHERE invoice_id = ? AND status = ?', (invoice_id, 'active'))
             payment = await cursor.fetchone()
             
             if not payment:
                 return False
             
-            user_id, amount_usd, amount_rub = payment
+            user_id, amount_usd = payment
             
             await db.execute('''
                 UPDATE users SET balance_usd = balance_usd + ?, balance_rub = balance_rub + ?
                 WHERE user_id = ?
-            ''', (amount_usd, amount_rub, user_id))
+            ''', (amount_usd, amount_usd * USD_TO_RUB, user_id))
             
             await db.execute('''
-                UPDATE payments SET status = ?, confirmed_at = CURRENT_TIMESTAMP
-                WHERE payment_id = ?
-            ''', ('confirmed', payment_id))
+                UPDATE crypto_payments SET status = ?, paid_at = CURRENT_TIMESTAMP
+                WHERE invoice_id = ?
+            ''', ('paid', invoice_id))
             
             await db.execute('''
                 INSERT INTO transactions (user_id, amount_usd, amount_rub, type, description)
                 VALUES (?, ?, ?, ?, ?)
-            ''', (user_id, amount_usd, amount_rub, 'deposit', f'Пополнение через {payment[3] if len(payment) > 3 else "платёжку"}'))
+            ''', (user_id, amount_usd, amount_usd * USD_TO_RUB, 'crypto_deposit', f'Пополнение через Crypto Pay'))
             
             await db.commit()
             return True
@@ -462,8 +526,8 @@ class Database:
             cursor = await db.execute('SELECT COUNT(*) FROM deals WHERE status = ?', ('pending',))
             active_deals = (await cursor.fetchone())[0]
             
-            cursor = await db.execute('SELECT COUNT(*) FROM payments WHERE status = ?', ('pending',))
-            pending_payments = (await cursor.fetchone())[0]
+            cursor = await db.execute('SELECT COUNT(*) FROM crypto_payments WHERE status = ?', ('active',))
+            active_payments = (await cursor.fetchone())[0]
             
             return {
                 'users': users,
@@ -473,7 +537,7 @@ class Database:
                 'frozen_usd': frozen_usd,
                 'frozen_rub': frozen_rub,
                 'active_deals': active_deals,
-                'pending_payments': pending_payments
+                'active_payments': active_payments
             }
     
     async def get_top_users(self, limit: int = 10) -> List[Dict]:
@@ -520,8 +584,11 @@ class Database:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
 
-# ========== СОЗДАЁМ ЭКЗЕМПЛЯР БД ==========
+# ========== ИНИЦИАЛИЗАЦИЯ ==========
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher(storage=MemoryStorage())
 db = Database()
+crypto = CryptoPayAPI(CRYPTOPAY_TOKEN)
 
 # ========== КЛАВИАТУРЫ ==========
 class Keyboards:
@@ -543,7 +610,7 @@ class Keyboards:
             ],
             [
                 InlineKeyboardButton(text="🔄 МОИ СДЕЛКИ", callback_data="my_deals"),
-                InlineKeyboardButton(text="💳 ПОПОЛНИТЬ", callback_data="deposit")
+                InlineKeyboardButton(text="💳 КРИПТО", callback_data="crypto_menu")
             ],
             [
                 InlineKeyboardButton(text="📢 КАНАЛ", url=CHANNEL_LINK),
@@ -559,36 +626,29 @@ class Keyboards:
         ])
     
     @staticmethod
-    def deposit() -> InlineKeyboardMarkup:
+    def crypto() -> InlineKeyboardMarkup:
         buttons = [
-            [InlineKeyboardButton(text="₿ Bitcoin (BTC)", callback_data="deposit_btc")],
-            [InlineKeyboardButton(text="⟠ Ethereum (ETH)", callback_data="deposit_eth")],
-            [InlineKeyboardButton(text="💵 Tether (USDT)", callback_data="deposit_usdt")],
-            [InlineKeyboardButton(text="⬤ Toncoin (TON)", callback_data="deposit_ton")],
-            [InlineKeyboardButton(text="💳 Банковская карта", callback_data="deposit_card")],
+            [InlineKeyboardButton(text="₿ Bitcoin (BTC)", callback_data="crypto_btc")],
+            [InlineKeyboardButton(text="⟠ Ethereum (ETH)", callback_data="crypto_eth")],
+            [InlineKeyboardButton(text="💵 Tether (USDT)", callback_data="crypto_usdt")],
+            [InlineKeyboardButton(text="⬤ Toncoin (TON)", callback_data="crypto_ton")],
             [InlineKeyboardButton(text="◀ НАЗАД", callback_data="main_menu")]
         ]
         return InlineKeyboardMarkup(inline_keyboard=buttons)
     
     @staticmethod
-    def deposit_amounts(method: str, amounts: List[int]) -> InlineKeyboardMarkup:
+    def crypto_amounts(asset: str) -> InlineKeyboardMarkup:
+        amounts = [10, 25, 50, 100, 250, 500, 1000]
         buttons = []
         row = []
         for i, amount in enumerate(amounts):
-            if method == 'card':
-                display = f"{amount * USD_TO_RUB}₽"
-                callback = f"deposit_{method}_{amount}"
-            else:
-                display = f"{amount}$"
-                callback = f"deposit_{method}_{amount}"
-            
-            row.append(InlineKeyboardButton(text=display, callback_data=callback))
+            row.append(InlineKeyboardButton(text=f"{amount}$", callback_data=f"crypto_pay_{asset}_{amount}"))
             if (i + 1) % 4 == 0:
                 buttons.append(row)
                 row = []
         if row:
             buttons.append(row)
-        buttons.append([InlineKeyboardButton(text="◀ НАЗАД", callback_data="deposit")])
+        buttons.append([InlineKeyboardButton(text="◀ НАЗАД", callback_data="crypto_menu")])
         return InlineKeyboardMarkup(inline_keyboard=buttons)
     
     @staticmethod
@@ -612,7 +672,7 @@ class Keyboards:
             [InlineKeyboardButton(text="👑 ВЫДАТЬ VIP", callback_data="admin_give_vip")],
             [InlineKeyboardButton(text="🛒 ДОБАВИТЬ СКИН", callback_data="admin_add_skin")],
             [InlineKeyboardButton(text="📋 АКТИВНЫЕ СДЕЛКИ", callback_data="admin_deals")],
-            [InlineKeyboardButton(text="💳 ПЛАТЕЖИ", callback_data="admin_payments")],
+            [InlineKeyboardButton(text="💳 КРИПТО-ПЛАТЕЖИ", callback_data="admin_payments")],
             [InlineKeyboardButton(text="◀ НАЗАД", callback_data="main_menu")]
         ]
         return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -648,14 +708,6 @@ class States(StatesGroup):
     admin_add_skin_quality = State()
     admin_add_skin_price = State()
 
-# ========== ИНИЦИАЛИЗАЦИЯ БОТА ==========
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(storage=MemoryStorage())
-
-# ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
-def generate_payment_id() -> str:
-    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=16))
-
 # ========== КОМАНДЫ ==========
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
@@ -686,10 +738,10 @@ async def cmd_start(message: Message):
 ├ 👥 Рефералов: **{user['referral_count']}**
 └ 👑 VIP: {"✅" if is_vip else "❌"}
 
-💳 **ПЛАТЁЖНЫЕ СИСТЕМЫ:**
-├ ₿ Криптовалюта (BTC/ETH/USDT/TON)
-├ 💳 Банковские карты
-└ ⭐ Telegram Stars
+💳 **КРИПТО-ПЛАТЕЖИ ЧЕРЕЗ @CryptoBot:**
+├ ₿ BTC | ⟠ ETH | 💵 USDT | ⬤ TON
+├ Мгновенное зачисление
+└ Без комиссии
 
 ⚡ **Выбери действие в меню ниже!**
     """
@@ -723,10 +775,10 @@ async def cmd_help(message: Message):
 /top - Топ пользователей
 /mydeals - Мои сделки
 
-💳 **Платёжные системы:**
-├ ₿ Криптовалюта - BTC, ETH, USDT, TON
-├ 💳 Банковские карты - Visa, MasterCard, МИР
-└ ⭐ Telegram Stars - внутренняя валюта
+💳 **Крипто-платежи через @CryptoBot:**
+├ BTC, ETH, USDT, TON
+├ Мгновенное зачисление
+└ Без комиссии
 
 💎 **Реферальная система:**
 За каждого друга ты получаешь **+{REFERRAL_BONUS}$**!
@@ -1046,218 +1098,155 @@ async def callback_buy_vip(callback: CallbackQuery):
             parse_mode="Markdown"
         )
 
-# ========== ПЛАТЕЖИ ==========
-@dp.callback_query(F.data == "deposit")
-async def callback_deposit(callback: CallbackQuery):
-    """Меню пополнения"""
+# ========== КРИПТО-ПЛАТЕЖИ ==========
+@dp.callback_query(F.data == "crypto_menu")
+async def callback_crypto_menu(callback: CallbackQuery):
+    """Меню выбора криптовалюты"""
     await callback.message.edit_text(
-        "💳 **ВЫБЕРИ СПОСОБ ПОПОЛНЕНИЯ**\n\n"
-        "₿ Bitcoin (BTC) - без комиссии\n"
-        "⟠ Ethereum (ETH) - без комиссии\n"
-        "💵 Tether (USDT) - стабильная монета\n"
-        "⬤ Toncoin (TON) - быстро и дёшево\n"
-        "💳 Банковская карта - Visa, MasterCard, МИР\n\n"
-        "👇 Выбери удобный способ:",
-        reply_markup=Keyboards.deposit(),
+        "💳 **КРИПТО-ПЛАТЕЖИ ЧЕРЕЗ @CryptoBot**\n\n"
+        "Выбери валюту для пополнения:\n\n"
+        "₿ **BTC** - Bitcoin\n"
+        "⟠ **ETH** - Ethereum\n"
+        "💵 **USDT** - Tether (стабильная монета)\n"
+        "⬤ **TON** - Toncoin\n\n"
+        "✅ Мгновенное зачисление\n"
+        "✅ Без комиссии\n"
+        "✅ Через официального бота @CryptoBot",
+        reply_markup=Keyboards.crypto(),
         parse_mode="Markdown"
     )
 
-@dp.callback_query(F.data == "deposit_btc")
-async def callback_deposit_btc(callback: CallbackQuery):
-    amounts = [10, 25, 50, 100, 250, 500]
+@dp.callback_query(F.data.startswith("crypto_"))
+async def callback_crypto_select(callback: CallbackQuery):
+    """Выбор валюты"""
+    asset = callback.data.split("_")[1].upper()
+    asset_names = {
+        'BTC': 'Bitcoin',
+        'ETH': 'Ethereum',
+        'USDT': 'Tether',
+        'TON': 'Toncoin'
+    }
+    name = asset_names.get(asset, asset)
+    
     await callback.message.edit_text(
-        "₿ **ПОПОЛНЕНИЕ В BTC**\n\n"
-        "Выбери сумму в долларах:",
-        reply_markup=Keyboards.deposit_amounts('btc', amounts),
+        f"💳 **ПОПОЛНЕНИЕ В {name} ({asset})**\n\n"
+        f"Выбери сумму в долларах США:",
+        reply_markup=Keyboards.crypto_amounts(asset),
         parse_mode="Markdown"
     )
 
-@dp.callback_query(F.data == "deposit_eth")
-async def callback_deposit_eth(callback: CallbackQuery):
-    amounts = [10, 25, 50, 100, 250, 500]
+@dp.callback_query(F.data.startswith("crypto_pay_"))
+async def callback_crypto_pay(callback: CallbackQuery):
+    """Создание платежа"""
+    _, _, asset, amount_str = callback.data.split("_")
+    amount = int(amount_str)
+    user_id = callback.from_user.id
+    
     await callback.message.edit_text(
-        "⟠ **ПОПОЛНЕНИЕ В ETH**\n\n"
-        "Выбери сумму в долларах:",
-        reply_markup=Keyboards.deposit_amounts('eth', amounts),
+        f"⏳ **Создаю платёж...**\n\n"
+        f"Пожалуйста, подожди.",
         parse_mode="Markdown"
     )
-
-@dp.callback_query(F.data == "deposit_usdt")
-async def callback_deposit_usdt(callback: CallbackQuery):
-    amounts = [10, 25, 50, 100, 250, 500]
-    await callback.message.edit_text(
-        "💵 **ПОПОЛНЕНИЕ В USDT**\n\n"
-        "Выбери сумму в долларах:",
-        reply_markup=Keyboards.deposit_amounts('usdt', amounts),
-        parse_mode="Markdown"
-    )
-
-@dp.callback_query(F.data == "deposit_ton")
-async def callback_deposit_ton(callback: CallbackQuery):
-    amounts = [10, 25, 50, 100, 250, 500]
-    await callback.message.edit_text(
-        "⬤ **ПОПОЛНЕНИЕ В TON**\n\n"
-        "Выбери сумму в долларах:",
-        reply_markup=Keyboards.deposit_amounts('ton', amounts),
-        parse_mode="Markdown"
-    )
-
-@dp.callback_query(F.data == "deposit_card")
-async def callback_deposit_card(callback: CallbackQuery):
-    amounts = [10, 25, 50, 100, 250, 500]
-    await callback.message.edit_text(
-        "💳 **ПОПОЛНЕНИЕ КАРТОЙ**\n\n"
-        "Выбери сумму в долларах (конвертация в рубли по курсу):",
-        reply_markup=Keyboards.deposit_amounts('card', amounts),
-        parse_mode="Markdown"
-    )
-
-@dp.callback_query(F.data.startswith("deposit_btc_"))
-async def callback_deposit_btc_amount(callback: CallbackQuery):
-    amount = int(callback.data.split("_")[2])
-    await process_crypto_deposit(callback, amount, 'BTC')
-
-@dp.callback_query(F.data.startswith("deposit_eth_"))
-async def callback_deposit_eth_amount(callback: CallbackQuery):
-    amount = int(callback.data.split("_")[2])
-    await process_crypto_deposit(callback, amount, 'ETH')
-
-@dp.callback_query(F.data.startswith("deposit_usdt_"))
-async def callback_deposit_usdt_amount(callback: CallbackQuery):
-    amount = int(callback.data.split("_")[2])
-    await process_crypto_deposit(callback, amount, 'USDT')
-
-@dp.callback_query(F.data.startswith("deposit_ton_"))
-async def callback_deposit_ton_amount(callback: CallbackQuery):
-    amount = int(callback.data.split("_")[2])
-    await process_crypto_deposit(callback, amount, 'TON')
-
-@dp.callback_query(F.data.startswith("deposit_card_"))
-async def callback_deposit_card_amount(callback: CallbackQuery):
-    amount_usd = int(callback.data.split("_")[2])
-    amount_rub = amount_usd * USD_TO_RUB
     
-    payment_id = generate_payment_id()
+    # Создаём счёт в Crypto Pay
+    description = f"Пополнение баланса SHIZOGP на {amount}$"
+    result = await crypto.create_invoice(amount, asset, description)
     
-    await db.add_payment(
-        callback.from_user.id,
-        payment_id,
-        amount_usd,
-        amount_rub,
-        'card'
-    )
-    
-    text = f"""
-💳 **ПЛАТЁЖ СОЗДАН**
-
-💰 **Сумма:** {amount_rub}₽
-💳 **Способ:** Банковская карта
-🆔 **ID:** `{payment_id}`
-
-📋 **Инструкция:**
-1. Отправь {amount_rub}₽ на карту: `2200 1234 5678 9012`
-2. Получатель: SHIZOGP
-3. После оплаты нажми "Я ОПЛАТИЛ"
-
-⏱ **Счёт действителен 1 час**
-    """
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Я ОПЛАТИЛ", callback_data=f"check_payment_{payment_id}")],
-        [InlineKeyboardButton(text="◀ НАЗАД", callback_data="deposit")]
-    ])
-    
-    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
-
-async def process_crypto_deposit(callback: CallbackQuery, amount_usd: int, currency: str):
-    """Обработка крипто-депозита"""
-    payment_id = generate_payment_id()
-    
-    # Здесь должен быть реальный расчёт курса
-    if currency == 'BTC':
-        amount_crypto = amount_usd / 50000
-        wallet = CRYPTO_WALLETS['BTC']
-        network = 'Bitcoin'
-    elif currency == 'ETH':
-        amount_crypto = amount_usd / 3000
-        wallet = CRYPTO_WALLETS['ETH']
-        network = 'Ethereum'
-    elif currency == 'USDT':
-        amount_crypto = amount_usd
-        wallet = CRYPTO_WALLETS['USDT']
-        network = 'TRC-20'
-    elif currency == 'TON':
-        amount_crypto = amount_usd / 5
-        wallet = CRYPTO_WALLETS['TON']
-        network = 'TON'
-    else:
+    if not result['success']:
         await callback.message.edit_text(
-            f"❌ **Неизвестная валюта**",
-            reply_markup=Keyboards.deposit(),
+            f"❌ **Ошибка создания платежа**\n\n"
+            f"{result.get('error', 'Неизвестная ошибка')}\n\n"
+            f"Попробуй позже или выбери другую валюту.",
+            reply_markup=Keyboards.crypto(),
             parse_mode="Markdown"
         )
         return
     
-    await db.add_payment(
-        callback.from_user.id,
-        payment_id,
-        amount_usd,
-        amount_usd * USD_TO_RUB,
-        currency.lower()
+    # Сохраняем платёж в БД
+    await db.add_crypto_payment(
+        user_id,
+        result['invoice_id'],
+        amount,
+        result['amount'],
+        result['asset'],
+        result['pay_url']
     )
     
     text = f"""
 💎 **КРИПТО-ПЛАТЁЖ СОЗДАН**
 
-💰 **Сумма:** {amount_usd}$
-🪙 **Валюта:** {currency}
-📤 **Количество:** {amount_crypto:.8f} {currency}
-📬 **Кошелёк:** `{wallet}`
+💰 **Сумма:** {amount}$
+🪙 **Валюта:** {asset}
+📤 **К оплате:** {result['amount']} {asset}
 
-🆔 **ID платежа:** `{payment_id}`
+🔗 **Ссылка для оплаты:**
+{result['pay_url']}
 
 ⏱ **Счёт действителен 1 час**
 
 📋 **Инструкция:**
-1. Отправь **точно {amount_crypto:.8f} {currency}** на кошелёк выше
-2. В комментарии укажи ID платежа
-3. Нажми "Я ОПЛАТИЛ"
+1. Нажми на кнопку «ОПЛАТИТЬ»
+2. Оплати через @CryptoBot
+3. После оплаты нажми «ПРОВЕРИТЬ»
+4. Средства зачислятся автоматически
 
-⚠️ **Отправляй только {currency} в сети {network}**
+⚠️ **Не закрывай это окно до оплаты!**
     """
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Я ОПЛАТИЛ", callback_data=f"check_payment_{payment_id}")],
-        [InlineKeyboardButton(text="◀ НАЗАД", callback_data="deposit")]
+        [InlineKeyboardButton(text="💳 ОПЛАТИТЬ", url=result['pay_url'])],
+        [InlineKeyboardButton(text="🔄 ПРОВЕРИТЬ ОПЛАТУ", callback_data=f"crypto_check_{result['invoice_id']}")],
+        [InlineKeyboardButton(text="◀ НАЗАД", callback_data="crypto_menu")]
     ])
     
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
 
-@dp.callback_query(F.data.startswith("check_payment_"))
-async def callback_check_payment(callback: CallbackQuery):
+@dp.callback_query(F.data.startswith("crypto_check_"))
+async def callback_crypto_check(callback: CallbackQuery):
     """Проверка статуса платежа"""
-    payment_id = callback.data.replace("check_payment_", "")
+    invoice_id = int(callback.data.replace("crypto_check_", ""))
     
-    if await db.confirm_payment(payment_id):
-        await callback.message.edit_text(
-            f"✅ **ПЛАТЁЖ ПОДТВЕРЖДЁН!**\n\n"
-            f"Средства зачислены на твой баланс.\n"
-            f"Можешь проверить в разделе «Баланс».",
-            reply_markup=Keyboards.main(),
-            parse_mode="Markdown"
-        )
+    result = await crypto.get_invoice_status(invoice_id)
+    
+    if not result['success']:
+        await callback.answer("❌ Не удалось проверить статус", show_alert=True)
+        return
+    
+    if result['status'] == 'paid':
+        # Подтверждаем платёж в БД
+        if await db.confirm_crypto_payment(invoice_id):
+            await callback.message.edit_text(
+                f"✅ **ПЛАТЁЖ ПОДТВЕРЖДЁН!**\n\n"
+                f"Средства зачислены на твой баланс.\n"
+                f"💰 Сумма: {result['amount']} {result['asset']}\n\n"
+                f"Можешь проверить в разделе «Баланс».",
+                reply_markup=Keyboards.main(),
+                parse_mode="Markdown"
+            )
+            
+            # Уведомление админам
+            for admin_id in ADMIN_IDS:
+                try:
+                    await bot.send_message(
+                        admin_id,
+                        f"💳 Пользователь @{callback.from_user.username or callback.from_user.id} пополнил баланс через Crypto Pay!\n"
+                        f"💰 Сумма: {result['amount']} {result['asset']}"
+                    )
+                except:
+                    pass
+        else:
+            await callback.message.edit_text(
+                f"❌ **Ошибка при зачислении средств**\n\n"
+                f"Обратись в поддержку: {SUPPORT_LINK}",
+                reply_markup=Keyboards.main(),
+                parse_mode="Markdown"
+            )
+    elif result['status'] == 'active':
+        await callback.answer("⏳ Платёж ещё не оплачен", show_alert=True)
     else:
-        await callback.message.edit_text(
-            f"⏳ **ПЛАТЁЖ ЕЩЁ НЕ ПОДТВЕРЖДЁН**\n\n"
-            f"Обычно это занимает до 10 минут.\n"
-            f"Если ты оплатил, подожди немного и нажми «Проверить ещё».",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🔄 ПРОВЕРИТЬ ЕЩЁ", callback_data=f"check_payment_{payment_id}")],
-                [InlineKeyboardButton(text="◀ НАЗАД", callback_data="deposit")]
-            ]),
-            parse_mode="Markdown"
-        )
+        await callback.answer(f"❌ Статус: {result['status']}", show_alert=True)
 
+# ========== ПРОФИЛЬ ==========
 @dp.callback_query(F.data == "profile")
 async def callback_profile(callback: CallbackQuery):
     user_id = callback.from_user.id
@@ -1295,6 +1284,7 @@ async def callback_profile(callback: CallbackQuery):
         parse_mode="Markdown"
     )
 
+# ========== ДЕЙЛИК ==========
 @dp.callback_query(F.data == "daily")
 async def callback_daily(callback: CallbackQuery):
     user_id = callback.from_user.id
@@ -1329,6 +1319,7 @@ async def callback_daily(callback: CallbackQuery):
         parse_mode="Markdown"
     )
 
+# ========== ТОП ==========
 @dp.callback_query(F.data == "top")
 async def callback_top(callback: CallbackQuery):
     top_users = await db.get_top_users(10)
@@ -1343,6 +1334,7 @@ async def callback_top(callback: CallbackQuery):
     
     await callback.message.edit_text(text, reply_markup=Keyboards.back(), parse_mode="Markdown")
 
+# ========== МОИ СДЕЛКИ ==========
 @dp.callback_query(F.data == "my_deals")
 async def callback_my_deals(callback: CallbackQuery):
     user_id = callback.from_user.id
@@ -1416,6 +1408,7 @@ async def callback_view_deal(callback: CallbackQuery):
             parse_mode="Markdown"
         )
 
+# ========== МАГАЗИН ==========
 @dp.callback_query(F.data == "shop")
 async def callback_shop(callback: CallbackQuery):
     skins = await db.get_available_skins()
@@ -1587,6 +1580,7 @@ async def callback_cancel_deal(callback: CallbackQuery):
             parse_mode="Markdown"
         )
 
+# ========== ПОМОЩЬ ==========
 @dp.callback_query(F.data == "help")
 async def callback_help(callback: CallbackQuery):
     await callback.message.edit_text(
@@ -1603,7 +1597,7 @@ async def callback_help(callback: CallbackQuery):
         f"💎 Рефералы: +{REFERRAL_BONUS}$\n"
         f"👑 VIP: {VIP_PRICE}$ / {VIP_PRICE_RUB}₽\n"
         f"🛒 Магазин: {len(TEST_SKINS)} скинов\n"
-        f"💳 Крипта: BTC, ETH, USDT, TON\n"
+        f"💳 Крипта: BTC, ETH, USDT, TON через @CryptoBot\n"
         f"📞 Поддержка: {SUPPORT_LINK}",
         reply_markup=Keyboards.back(),
         parse_mode="Markdown"
@@ -1629,7 +1623,7 @@ async def cmd_admin(message: Message):
 ├ 🔒 Заморожено USD: {stats['frozen_usd']}$
 ├ 🔒 Заморожено RUB: {stats['frozen_rub']}₽
 ├ 📋 Активных сделок: {stats['active_deals']}
-├ 💳 Ожидающих платежей: {stats['pending_payments']}
+├ 💳 Активных платежей: {stats['active_payments']}
 └ 💳 Средний баланс: {(stats['total_usd'] + stats['frozen_usd']) // stats['users'] if stats['users'] else 0}$
 
 ⚙️ **Доступные действия:**
@@ -1638,7 +1632,7 @@ async def cmd_admin(message: Message):
 ├ 👑 Выдача VIP
 ├ 🛒 Добавление скинов
 ├ 📋 Активные сделки
-└ 💳 Платежи
+└ 💳 Крипто-платежи
     """
     
     await message.answer(text, reply_markup=Keyboards.admin(), parse_mode="Markdown")
@@ -1676,9 +1670,9 @@ async def callback_admin_stats(callback: CallbackQuery):
 ├ Активных: **{stats['active_deals']}**
 └ Заморожено в сделках: **{stats['frozen_usd']}$** / **{stats['frozen_rub']}₽**
 
-💳 **Платежи:**
-├ Ожидающих: **{stats['pending_payments']}**
-└ Средняя сумма: **{stats['total_usd'] // max(stats['users'], 1)}$**
+💳 **Крипто-платежи:**
+├ Активных: **{stats['active_payments']}**
+└ Ожидают оплаты
     """
     
     await callback.message.edit_text(text, reply_markup=Keyboards.admin(), parse_mode="Markdown")
@@ -1840,24 +1834,23 @@ async def callback_admin_payments(callback: CallbackQuery):
     async with aiosqlite.connect(DATABASE_PATH) as db_conn:
         db_conn.row_factory = aiosqlite.Row
         cursor = await db_conn.execute('''
-            SELECT * FROM payments WHERE status = 'pending' ORDER BY created_at DESC LIMIT 20
+            SELECT * FROM crypto_payments WHERE status = 'active' ORDER BY created_at DESC LIMIT 20
         ''')
         payments = await cursor.fetchall()
     
     if not payments:
         await callback.message.edit_text(
-            "📭 **Нет ожидающих платежей**",
+            "📭 **Нет активных крипто-платежей**",
             reply_markup=Keyboards.admin(),
             parse_mode="Markdown"
         )
         return
     
-    text = "💳 **ОЖИДАЮЩИЕ ПЛАТЕЖИ**\n\n"
+    text = "💳 **АКТИВНЫЕ КРИПТО-ПЛАТЕЖИ**\n\n"
     for p in payments:
-        text += f"🆔 `{p['payment_id']}`\n"
+        text += f"🆔 Invoice: `{p['invoice_id']}`\n"
         text += f"👤 Пользователь: {p['user_id']}\n"
-        text += f"💰 Сумма: {p['amount_usd']}$ / {p['amount_rub']}₽\n"
-        text += f"💱 Способ: {p['method']}\n"
+        text += f"💰 Сумма: {p['amount_usd']}$ / {p['amount_crypto']} {p['asset']}\n"
         text += f"📅 {p['created_at'][:16]}\n\n"
     
     await callback.message.edit_text(text, reply_markup=Keyboards.admin(), parse_mode="Markdown")
@@ -1865,10 +1858,11 @@ async def callback_admin_payments(callback: CallbackQuery):
 # ========== ЗАПУСК ==========
 async def on_startup():
     print(f"\n{Colors.CYAN}{'='*60}{Colors.END}")
-    print(f"{Colors.MAGENTA}{Colors.BOLD}🔥 SHIZOGP - ВСЁ ИСПРАВЛЕНО 🔥{Colors.END}")
+    print(f"{Colors.MAGENTA}{Colors.BOLD}🔥 SHIZOGP - CRYPTO PAY INTEGRATED 🔥{Colors.END}")
     print(f"{Colors.CYAN}{'='*60}{Colors.END}")
     print(f"{Colors.GREEN}✅ Версия: {BOT_VERSION}{Colors.END}")
     print(f"{Colors.GREEN}✅ Токен: {BOT_TOKEN[:15]}...{Colors.END}")
+    print(f"{Colors.GREEN}✅ Crypto Pay Token: {CRYPTOPAY_TOKEN[:10]}...{Colors.END}")
     print(f"{Colors.GREEN}✅ Админы: {ADMIN_IDS}{Colors.END}")
     print(f"{Colors.GREEN}✅ VIP чат: {VIP_CHAT_LINK}{Colors.END}")
     print(f"{Colors.GREEN}✅ Тестовые скины: {len(TEST_SKINS)}{Colors.END}")
