@@ -2,13 +2,44 @@
 # -*- coding: utf-8 -*-
 """
 🔥 SHIZOGP - АБСОЛЮТНО ПОЛНЫЙ ТЕЛЕГРАМ БОТ
-Версия: 3.0 (РАЗЪЕБАЛОВО-ФИНАЛ)
-Разработчик: GhostiPeeK
-Лицензия: Да пофиг, главное что работает!
+Версия: 3.1 (АВТОУСТАНОВКА)
 """
 
 import os
 import sys
+import subprocess
+import importlib.util
+
+# ========== АВТОМАТИЧЕСКАЯ УСТАНОВКА БИБЛИОТЕК ==========
+def install_package(package):
+    """Установка пакета через pip"""
+    print(f"🔄 Устанавливаю {package}...")
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", package])
+        print(f"✅ {package} установлен!")
+        return True
+    except:
+        print(f"❌ Ошибка установки {package}")
+        return False
+
+# Проверяем и устанавливаем все необходимые библиотеки
+required_packages = [
+    "aiogram==3.4.1",
+    "aiosqlite==0.19.0",
+    "python-dotenv==1.0.0"
+]
+
+for package in required_packages:
+    package_name = package.split("==")[0]
+    if importlib.util.find_spec(package_name) is None:
+        print(f"⚠️ Библиотека {package_name} не найдена")
+        install_package(package)
+    else:
+        print(f"✅ {package_name} уже установлен")
+
+# ========== ТЕПЕРЬ МОЖНО ИМПОРТИРОВАТЬ ==========
+print("🚀 Загрузка бота...")
+
 import json
 import asyncio
 import logging
@@ -18,62 +49,36 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Any
 from contextlib import asynccontextmanager
 
-# Настройка путей
-import pathlib
-path = pathlib.Path(__file__).parent.absolute()
-os.chdir(path)
-
-# ========== УСТАНОВКА ЗАВИСИМОСТЕЙ (АВТОМАТИЧЕСКАЯ) ==========
-try:
-    from aiogram import Bot, Dispatcher, types, F
-    from aiogram.filters import Command
-    from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
-    from aiogram.fsm.context import FSMContext
-    from aiogram.fsm.state import State, StatesGroup
-    from aiogram.fsm.storage.memory import MemoryStorage
-    from aiogram.exceptions import TelegramBadRequest
-except ImportError:
-    print("🔄 Устанавливаю aiogram...")
-    os.system("pip install aiogram==3.4.1")
-    from aiogram import Bot, Dispatcher, types, F
-    from aiogram.filters import Command
-    from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
-    from aiogram.fsm.context import FSMContext
-    from aiogram.fsm.state import State, StatesGroup
-    from aiogram.fsm.storage.memory import MemoryStorage
-    from aiogram.exceptions import TelegramBadRequest
-
-try:
-    import aiosqlite
-except ImportError:
-    print("🔄 Устанавливаю aiosqlite...")
-    os.system("pip install aiosqlite==0.19.0")
-    import aiosqlite
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.filters import Command
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.exceptions import TelegramBadRequest
 
 try:
     from dotenv import load_dotenv
-except ImportError:
-    print("🔄 Устанавливаю python-dotenv...")
-    os.system("pip install python-dotenv==1.0.0")
-    from dotenv import load_dotenv
+except:
+    pass
 
-# Загружаем переменные окружения
-load_dotenv()
+# Загружаем переменные окружения если есть .env
+if os.path.exists('.env'):
+    load_dotenv()
 
-# ========== НАСТРОЙКИ (МЕНЯЙ ПОД СЕБЯ) ==========
+# ========== НАСТРОЙКИ ==========
 BOT_TOKEN = os.getenv('BOT_TOKEN', '8498694285:AAG3Ezx7BDGciUIYAAb4UHMtFUmBYvock3w')
 ADMIN_IDS = [int(x) for x in os.getenv('ADMIN_IDS', '2091630272').split(',') if x]
 VIP_CHAT_LINK = os.getenv('VIP_CHAT_LINK', 'https://t.me/+r3rxYlBjbTYyMDY6')
 SUPPORT_LINK = os.getenv('SUPPORT_LINK', 'https://t.me/SHIZOGP_support')
 CHANNEL_LINK = os.getenv('CHANNEL_LINK', 'https://t.me/SHIZOGP_channel')
 
-# Настройки бота
-VIP_PRICE = 550  # Цена VIP в монетах
-VIP_DURATION = 30  # Дней VIP
-REFERRAL_BONUS = 50  # Бонус за реферала
-START_BALANCE = 100  # Стартовый баланс
-DATABASE_PATH = "shizogp.db"  # Имя файла базы данных
-BOT_VERSION = "3.0 (РАЗЪЕБАЛОВО-ФИНАЛ)"
+VIP_PRICE = 550
+VIP_DURATION = 30
+REFERRAL_BONUS = 50
+START_BALANCE = 100
+DATABASE_PATH = "shizogp.db"
+BOT_VERSION = "3.1 (АВТОУСТАНОВКА)"
 BOT_NAME = "SHIZOGP"
 
 # ========== НАСТРОЙКА ЛОГИРОВАНИЯ ==========
@@ -87,7 +92,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ========== ЦВЕТА ДЛЯ ТЕРМИНАЛА ==========
+# ========== ЦВЕТА ==========
 class Colors:
     RED = '\033[91m'
     GREEN = '\033[92m'
@@ -121,8 +126,7 @@ class Database:
                     registration_date TEXT DEFAULT CURRENT_TIMESTAMP,
                     last_visit TEXT DEFAULT CURRENT_TIMESTAMP,
                     is_admin INTEGER DEFAULT 0,
-                    is_banned INTEGER DEFAULT 0,
-                    language TEXT DEFAULT 'ru'
+                    is_banned INTEGER DEFAULT 0
                 )
             ''')
             
@@ -135,46 +139,6 @@ class Database:
                     type TEXT,
                     description TEXT,
                     date TEXT DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
-            # Скины
-            await db.execute('''
-                CREATE TABLE IF NOT EXISTS skins (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT,
-                    quality TEXT,
-                    price INTEGER,
-                    image_url TEXT,
-                    seller_id INTEGER,
-                    status TEXT DEFAULT 'available',
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    sold_at TEXT
-                )
-            ''')
-            
-            # Сделки
-            await db.execute('''
-                CREATE TABLE IF NOT EXISTS deals (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    skin_id INTEGER,
-                    buyer_id INTEGER,
-                    seller_id INTEGER,
-                    price INTEGER,
-                    status TEXT DEFAULT 'pending',
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    completed_at TEXT
-                )
-            ''')
-            
-            # Рефералы
-            await db.execute('''
-                CREATE TABLE IF NOT EXISTS referrals (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER,
-                    referrer_id INTEGER,
-                    date TEXT DEFAULT CURRENT_TIMESTAMP,
-                    bonus_paid INTEGER DEFAULT 1
                 )
             ''')
             
@@ -210,11 +174,6 @@ class Database:
                     UPDATE users SET balance = balance + ?, referral_count = referral_count + 1
                     WHERE user_id = ?
                 ''', (REFERRAL_BONUS, referrer_id))
-                
-                await db.execute('''
-                    INSERT INTO referrals (user_id, referrer_id)
-                    VALUES (?, ?)
-                ''', (user_id, referrer_id))
                 
                 await db.execute('''
                     INSERT INTO transactions (user_id, amount, type, description)
@@ -274,16 +233,12 @@ class Database:
             cursor = await db.execute('SELECT COUNT(*) FROM users WHERE vip_status = 1')
             vip = (await cursor.fetchone())[0]
             
-            cursor = await db.execute('SELECT COUNT(*) FROM deals WHERE status = "completed"')
-            deals = (await cursor.fetchone())[0]
-            
             cursor = await db.execute('SELECT SUM(balance) FROM users')
             total_balance = (await cursor.fetchone())[0] or 0
             
             return {
                 'users': users,
                 'vip': vip,
-                'deals': deals,
                 'total_balance': total_balance
             }
 
@@ -293,7 +248,7 @@ db = Database()
 # ========== КЛАВИАТУРЫ ==========
 class Keyboards:
     @staticmethod
-    def main(user_id: int = None) -> InlineKeyboardMarkup:
+    def main() -> InlineKeyboardMarkup:
         """Главное меню"""
         buttons = [
             [InlineKeyboardButton(text="🛒 МАГАЗИН", callback_data="shop")],
@@ -338,35 +293,23 @@ class Keyboards:
         """Админ меню"""
         buttons = [
             [InlineKeyboardButton(text="📊 СТАТИСТИКА", callback_data="admin_stats")],
-            [InlineKeyboardButton(text="👥 ПОЛЬЗОВАТЕЛИ", callback_data="admin_users")],
             [InlineKeyboardButton(text="💰 ПОПОЛНИТЬ БАЛАНС", callback_data="admin_add_balance")],
             [InlineKeyboardButton(text="👑 ВЫДАТЬ VIP", callback_data="admin_give_vip")],
-            [InlineKeyboardButton(text="🔧 УПРАВЛЕНИЕ", callback_data="admin_manage")],
             [InlineKeyboardButton(text="◀ НАЗАД", callback_data="main_menu")]
         ]
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# ========== СОСТОЯНИЯ FSM ==========
+# ========== СОСТОЯНИЯ ==========
 class States(StatesGroup):
-    # Админские состояния
     admin_add_balance_user = State()
     admin_add_balance_amount = State()
     admin_give_vip_user = State()
-    
-    # Пользовательские состояния
-    sell_skin_name = State()
-    sell_skin_quality = State()
-    sell_skin_price = State()
-    sell_skin_image = State()
-    
-    # Поддержка
-    support_message = State()
 
 # ========== ИНИЦИАЛИЗАЦИЯ БОТА ==========
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# ========== ХЕНДЛЕРЫ КОМАНД ==========
+# ========== КОМАНДЫ ==========
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     """Обработчик команды /start"""
@@ -392,23 +335,15 @@ async def cmd_start(message: Message):
     user = await db.get_user(user_id)
     is_vip = await db.check_vip(user_id)
     
-    # Красивое приветствие
     welcome_text = f"""
 🎮 **ДОБРО ПОЖАЛОВАТЬ В SHIZOGP!** 🎮
 
-👤 **Информация о тебе:**
-├ 🆔 ID: `{user_id}`
+👤 **Информация:**
 ├ 💰 Баланс: **{user['balance']}** монет
 ├ 👥 Рефералов: **{user['referral_count']}**
-└ 👑 VIP статус: {"✅" if is_vip else "❌"}
+└ 👑 VIP: {"✅" if is_vip else "❌"}
 
-🔥 **Что умеет бот:**
-├ 🛒 Покупать и продавать скины CS2
-├ 💎 Зарабатывать на рефералах
-├ 👑 Получать VIP статус
-└ 📊 Следить за статистикой
-
-⚡ **Выбери действие в меню ниже!**
+🔥 **Выбери действие в меню ниже!**
     """
     
     await message.answer(
@@ -421,7 +356,7 @@ async def cmd_start(message: Message):
 async def cmd_menu(message: Message):
     """Команда для открытия меню"""
     await message.answer(
-        "📋 **ГЛАВНОЕ МЕНЮ**\nВыбери действие:",
+        "📋 **ГЛАВНОЕ МЕНЮ**",
         reply_markup=Keyboards.main(),
         parse_mode="Markdown"
     )
@@ -429,126 +364,69 @@ async def cmd_menu(message: Message):
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
     """Команда помощи"""
-    help_text = """
-🆘 **ПОМОЩЬ ПО БОТУ SHIZOGP**
+    help_text = f"""
+🆘 **ПОМОЩЬ ПО БОТУ {BOT_NAME}**
 
-📌 **Основные команды:**
-├ /start - Запустить бота
-├ /menu - Открыть меню
-├ /help - Показать помощь
-├ /profile - Мой профиль
-└ /balance - Мой баланс
+📌 **Команды:**
+/start - Запустить
+/menu - Меню
+/help - Помощь
+/profile - Профиль
+/balance - Баланс
 
-🎮 **Разделы меню:**
-├ 🛒 **Магазин** - покупка скинов
-├ 💰 **Баланс** - проверка средств
-├ 🤝 **Рефералы** - приглашай друзей
-├ 👑 **VIP** - закрытый чат
-├ 📊 **Профиль** - твои данные
-└ ℹ️ **Помощь** - эта справка
+💎 **Рефералы:** +{REFERRAL_BONUS} монет за друга
+👑 **VIP:** {VIP_PRICE} монет / {VIP_DURATION} дней
 
-💎 **Реферальная система:**
-За каждого приглашённого друга ты получаешь **50 монет**!
-
-👑 **VIP статус:**
-├ Стоимость: **550 монет**
-├ Длительность: **30 дней**
-└ Доступ к закрытому VIP чату
-
-❓ **Вопросы и поддержка:**
-├ 📢 Канал: [Наш канал]({CHANNEL_LINK})
-└ 📞 Поддержка: [Написать]({SUPPORT_LINK})
-
-⚡ **Желаем удачных сделок!** ⚡
+📢 Канал: {CHANNEL_LINK}
+📞 Поддержка: {SUPPORT_LINK}
     """
+    
     await message.answer(
         help_text,
         reply_markup=Keyboards.back(),
-        parse_mode="Markdown",
-        disable_web_page_preview=True
+        parse_mode="Markdown"
     )
 
 @dp.message(Command("profile"))
 async def cmd_profile(message: Message):
-    """Команда профиля"""
+    """Профиль"""
     user_id = message.from_user.id
     user = await db.get_user(user_id)
     is_vip = await db.check_vip(user_id)
     
-    if not user:
-        await message.answer("❌ Пользователь не найден! Напиши /start")
-        return
-    
-    profile_text = f"""
+    text = f"""
 📊 **ТВОЙ ПРОФИЛЬ**
 
-👤 **Личные данные:**
-├ 🆔 ID: `{user_id}`
-├ 👤 Имя: {user['full_name']}
-├ 🏷 Username: @{user['username']}
-└ 📅 Регистрация: {user['registration_date'][:10]}
-
-💰 **Финансы:**
-├ Баланс: **{user['balance']}** монет
-├ Рефералов: **{user['referral_count']}** 👥
-└ Заработано с рефералов: **{user['referral_count'] * REFERRAL_BONUS}** монет
-
-👑 **VIP статус:**
-├ Статус: {"✅ АКТИВЕН" if is_vip else "❌ НЕ АКТИВЕН"}
-{"├ Действует до: " + user['vip_until'][:10] if is_vip and user['vip_until'] else ""}
-└ Стоимость: {VIP_PRICE} монет
-
-⚡ **Активность:**
-├ Последний визит: {user['last_visit'][:16] if user['last_visit'] else "Неизвестно"}
-└ Всего операций: {user['referral_count'] + 1}
+👤 ID: `{user_id}`
+💰 Баланс: **{user['balance']}** монет
+👥 Рефералов: **{user['referral_count']}**
+👑 VIP: {"✅" if is_vip else "❌"}
+📅 Регистрация: {user['registration_date'][:10]}
     """
     
-    await message.answer(
-        profile_text,
-        reply_markup=Keyboards.back(),
-        parse_mode="Markdown"
-    )
+    await message.answer(text, reply_markup=Keyboards.back(), parse_mode="Markdown")
 
 @dp.message(Command("balance"))
 async def cmd_balance(message: Message):
-    """Команда баланса"""
+    """Баланс"""
     user_id = message.from_user.id
     user = await db.get_user(user_id)
     
-    if not user:
-        await message.answer("❌ Пользователь не найден! Напиши /start")
-        return
-    
-    balance_text = f"""
-💰 **ТВОЙ БАЛАНС**
-
-├ Текущий баланс: **{user['balance']}** монет
-├ Рефералов: **{user['referral_count']}** 👥
-└ До VIP: **{max(0, VIP_PRICE - user['balance'])}** монет
-
-📊 **Способы пополнения:**
-├ 🤝 Приглашай друзей (+{REFERRAL_BONUS} монет)
-├ 🛒 Продавай скины
-└ 💎 Покупай VIP
-
-⚡ **Баланс можно потратить на:**
-├ 👑 VIP статус ({VIP_PRICE} монет)
-├ 🛒 Покупку скинов в магазине
-└ 🎁 Специальные предложения
-    """
-    
     await message.answer(
-        balance_text,
+        f"💰 **ТВОЙ БАЛАНС**\n\n"
+        f"Монет: **{user['balance']}** 💰\n"
+        f"Рефералов: **{user['referral_count']}** 👥\n\n"
+        f"До VIP: **{max(0, VIP_PRICE - user['balance'])}** монет",
         reply_markup=Keyboards.back(),
         parse_mode="Markdown"
     )
 
-# ========== ОБРАБОТЧИКИ КНОПОК ==========
+# ========== КНОПКИ ==========
 @dp.callback_query(F.data == "main_menu")
 async def callback_main_menu(callback: CallbackQuery):
     """Возврат в главное меню"""
     await callback.message.edit_text(
-        "📋 **ГЛАВНОЕ МЕНЮ**\nВыбери действие:",
+        "📋 **ГЛАВНОЕ МЕНЮ**",
         reply_markup=Keyboards.main(),
         parse_mode="Markdown"
     )
@@ -562,8 +440,7 @@ async def callback_balance(callback: CallbackQuery):
     await callback.message.edit_text(
         f"💰 **ТВОЙ БАЛАНС**\n\n"
         f"Монет: **{user['balance']}** 💰\n"
-        f"Рефералов: **{user['referral_count']}** 👥\n\n"
-        f"До VIP: **{max(0, VIP_PRICE - user['balance'])}** монет",
+        f"Рефералов: **{user['referral_count']}** 👥",
         reply_markup=Keyboards.back(),
         parse_mode="Markdown"
     )
@@ -580,22 +457,12 @@ async def callback_referral(callback: CallbackQuery):
     text = f"""
 🤝 **РЕФЕРАЛЬНАЯ ПРОГРАММА**
 
-👥 **Твоя статистика:**
-├ Рефералов: **{user['referral_count']}** 👥
-├ Заработано: **{user['referral_count'] * REFERRAL_BONUS}** монет
-└ Бонус за друга: **+{REFERRAL_BONUS}** монет
+👥 Рефералов: **{user['referral_count']}**
+💰 Заработано: **{user['referral_count'] * REFERRAL_BONUS}** монет
+🎁 Бонус за друга: **+{REFERRAL_BONUS}** монет
 
 🔗 **Твоя ссылка:**
 `{ref_link}`
-
-📤 **Как зарабатывать:**
-1. Отправь ссылку друзьям
-2. Друг переходит по ссылке
-3. Ты получаешь **+{REFERRAL_BONUS}** монет
-4. Профит! 🚀
-
-👑 **VIP бонус:**  
-VIP пользователи получают **+{REFERRAL_BONUS * 2}** монет за реферала!
     """
     
     await callback.message.edit_text(
@@ -615,35 +482,15 @@ async def callback_vip(callback: CallbackQuery):
         text = f"""
 👑 **VIP СТАТУС АКТИВЕН**
 
-✅ Ты имеешь доступ к закрытому VIP чату!
 📅 Действует до: {user['vip_until'][:10]}
-
-**Преимущества VIP:**
-├ 🔥 Закрытый чат с трейдерами
-├ 💰 Двойной бонус за рефералов
-├ 🎁 Эксклюзивные предложения
-├ ⚡ Приоритетная поддержка
-└ 🚀 Ранний доступ к новым скинам
-
-👇 **Нажми кнопку ниже чтобы войти в чат!**
         """
     else:
         text = f"""
 👑 **VIP СТАТУС**
 
-💰 **Стоимость:** {VIP_PRICE} монет
-📅 **Длительность:** {VIP_DURATION} дней
-
-🎁 **Что даёт VIP:**
-├ 🔥 Доступ в закрытый VIP чат
-├ 💰 Двойной бонус за рефералов
-├ 🎁 Эксклюзивные предложения
-├ ⚡ Приоритетная поддержка
-├ 🚀 Ранний доступ к новым скинам
-└ 👑 Статус и уважение
-
-📊 **Твой баланс:** {user['balance']} монет
-{"✅ **Можешь купить!**" if user['balance'] >= VIP_PRICE else f"❌ **Нужно ещё {VIP_PRICE - user['balance']} монет**"}
+💰 Цена: {VIP_PRICE} монет
+📅 Длительность: {VIP_DURATION} дней
+📊 Твой баланс: {user['balance']} монет
         """
     
     await callback.message.edit_text(
@@ -659,43 +506,26 @@ async def callback_buy_vip(callback: CallbackQuery):
     user = await db.get_user(user_id)
     
     if user['balance'] >= VIP_PRICE:
-        # Списываем монеты
         await db.update_balance(user_id, -VIP_PRICE, "Покупка VIP")
         await db.activate_vip(user_id)
         
         await callback.message.edit_text(
-            f"✅ **VIP УСПЕШНО АКТИВИРОВАН!**\n\n"
-            f"💰 Списанo: {VIP_PRICE} монет\n"
-            f"📅 Действует: {VIP_DURATION} дней\n"
-            f"👑 Остаток на балансе: {user['balance'] - VIP_PRICE} монет\n\n"
-            f"👇 **Нажми кнопку чтобы войти в VIP чат!**",
+            f"✅ **VIP АКТИВИРОВАН!**\n\n"
+            f"💰 Остаток: {user['balance'] - VIP_PRICE} монет",
             reply_markup=Keyboards.vip(True),
             parse_mode="Markdown"
         )
-        
-        # Уведомление админам
-        for admin_id in ADMIN_IDS:
-            try:
-                await bot.send_message(
-                    admin_id,
-                    f"👑 Пользователь @{callback.from_user.username or user_id} купил VIP!"
-                )
-            except:
-                pass
     else:
         need = VIP_PRICE - user['balance']
         await callback.message.edit_text(
-            f"❌ **Недостаточно монет!**\n\n"
-            f"Твой баланс: {user['balance']} монет\n"
-            f"Нужно ещё: **{need}** монет\n\n"
-            f"🤝 **Приглашай друзей и получай бонусы!**",
+            f"❌ **Недостаточно монет!**\n\nНужно ещё: **{need}** монет",
             reply_markup=Keyboards.back(),
             parse_mode="Markdown"
         )
 
 @dp.callback_query(F.data == "profile")
 async def callback_profile(callback: CallbackQuery):
-    """Профиль пользователя"""
+    """Профиль"""
     user_id = callback.from_user.id
     user = await db.get_user(user_id)
     is_vip = await db.check_vip(user_id)
@@ -703,21 +533,10 @@ async def callback_profile(callback: CallbackQuery):
     text = f"""
 📊 **ТВОЙ ПРОФИЛЬ**
 
-👤 **Личные данные:**
-├ 🆔 ID: `{user_id}`
-├ 👤 Имя: {user['full_name']}
-├ 🏷 Username: @{user['username']}
-└ 📅 Регистрация: {user['registration_date'][:10]}
-
-💰 **Финансы:**
-├ Баланс: **{user['balance']}** монет
-├ Рефералов: **{user['referral_count']}** 👥
-└ Заработано: **{user['referral_count'] * REFERRAL_BONUS}** монет
-
-👑 **VIP статус:**
-├ Статус: {"✅ АКТИВЕН" if is_vip else "❌ НЕ АКТИВЕН"}
-{"├ Действует до: " + user['vip_until'][:10] if is_vip and user['vip_until'] else ""}
-└ Стоимость: {VIP_PRICE} монет
+👤 ID: `{user_id}`
+💰 Баланс: **{user['balance']}** монет
+👥 Рефералов: **{user['referral_count']}**
+👑 VIP: {"✅" if is_vip else "❌"}
     """
     
     await callback.message.edit_text(
@@ -730,82 +549,48 @@ async def callback_profile(callback: CallbackQuery):
 async def callback_help(callback: CallbackQuery):
     """Помощь"""
     await callback.message.edit_text(
-        f"🆘 **ПОМОЩЬ ПО БОТУ {BOT_NAME}**\n\n"
-        f"📌 **Основные команды:**\n"
-        f"├ /start - Запустить бота\n"
-        f"├ /menu - Открыть меню\n"
-        f"├ /help - Показать помощь\n"
-        f"├ /profile - Мой профиль\n"
-        f"└ /balance - Мой баланс\n\n"
-        f"🎮 **Разделы меню:**\n"
-        f"├ 🛒 **Магазин** - покупка скинов\n"
-        f"├ 💰 **Баланс** - проверка средств\n"
-        f"├ 🤝 **Рефералы** - приглашай друзей\n"
-        f"├ 👑 **VIP** - закрытый чат\n"
-        f"├ 📊 **Профиль** - твои данные\n"
-        f"└ ℹ️ **Помощь** - эта справка\n\n"
-        f"💎 **Реферальная система:**\n"
-        f"За каждого друга **+{REFERRAL_BONUS}** монет!\n\n"
-        f"👑 **VIP статус:** {VIP_PRICE} монет / {VIP_DURATION} дней\n\n"
-        f"📢 **Наш канал:** {CHANNEL_LINK}\n"
-        f"📞 **Поддержка:** {SUPPORT_LINK}",
+        f"🆘 **ПОМОЩЬ**\n\n"
+        f"📌 Команды: /start, /menu, /help, /profile, /balance\n"
+        f"💎 Рефералы: +{REFERRAL_BONUS} монет\n"
+        f"👑 VIP: {VIP_PRICE} монет\n"
+        f"📞 Поддержка: {SUPPORT_LINK}",
         reply_markup=Keyboards.back(),
-        parse_mode="Markdown",
-        disable_web_page_preview=True
+        parse_mode="Markdown"
     )
 
 @dp.callback_query(F.data == "shop")
 async def callback_shop(callback: CallbackQuery):
     """Магазин"""
     await callback.message.edit_text(
-        "🛒 **МАГАЗИН СКИНОВ**\n\n"
-        "⚡ В разработке...\n\n"
-        "Скоро здесь появятся самые топовые скины CS2!\n\n"
-        "🔥 **А пока:**\n"
-        "├ 🤝 Зарабатывай на рефералах\n"
-        "├ 👑 Копи на VIP статус\n"
-        "└ ⏳ Жди обновлений",
+        "🛒 **МАГАЗИН**\n\n⚡ В разработке...",
         reply_markup=Keyboards.back(),
         parse_mode="Markdown"
     )
 
-# ========== АДМИНСКИЕ КОМАНДЫ ==========
+# ========== АДМИНКА ==========
 @dp.message(Command("admin"))
 async def cmd_admin(message: Message):
     """Админ панель"""
     if message.from_user.id not in ADMIN_IDS:
-        await message.answer("⛔ У тебя нет прав администратора!")
+        await message.answer("⛔ Доступ запрещён!")
         return
     
     stats = await db.get_stats()
     
     text = f"""
-🔧 **АДМИН ПАНЕЛЬ** 🔧
+🔧 **АДМИН ПАНЕЛЬ**
 
 📊 **СТАТИСТИКА:**
-├ 👥 Пользователей: **{stats['users']}**
-├ 👑 VIP: **{stats['vip']}**
-├ 💳 Сделок: **{stats['deals']}**
-└ 💰 Монет в системе: **{stats['total_balance']}**
-
-⚙️ **Доступные действия:**
-├ 📊 Просмотр статистики
-├ 👥 Управление пользователями
-├ 💰 Пополнение баланса
-└ 👑 Выдача VIP
-
-👇 **Выбери действие в меню:**
+👥 Пользователей: {stats['users']}
+👑 VIP: {stats['vip']}
+💰 Всего монет: {stats['total_balance']}
     """
     
-    await message.answer(
-        text,
-        reply_markup=Keyboards.admin(),
-        parse_mode="Markdown"
-    )
+    await message.answer(text, reply_markup=Keyboards.admin(), parse_mode="Markdown")
 
 @dp.callback_query(F.data == "admin_stats")
 async def callback_admin_stats(callback: CallbackQuery):
-    """Статистика для админа"""
+    """Статистика"""
     if callback.from_user.id not in ADMIN_IDS:
         await callback.answer("⛔ Доступ запрещён!", show_alert=True)
         return
@@ -813,97 +598,43 @@ async def callback_admin_stats(callback: CallbackQuery):
     stats = await db.get_stats()
     
     text = f"""
-📊 **ПОЛНАЯ СТАТИСТИКА**
+📊 **СТАТИСТИКА**
 
-👥 **Пользователи:**
-├ Всего: **{stats['users']}**
-├ VIP: **{stats['vip']}**
-├ Обычных: **{stats['users'] - stats['vip']}**
-└ Процент VIP: **{round(stats['vip']/stats['users']*100 if stats['users'] else 0, 1)}%**
-
-💰 **Финансы:**
-├ Всего монет: **{stats['total_balance']}**
-├ Средний баланс: **{round(stats['total_balance']/stats['users'] if stats['users'] else 0, 1)}**
-└ Монет у VIP: **{stats['vip'] * VIP_PRICE}** (оценка)
-
-💳 **Активность:**
-├ Завершённых сделок: **{stats['deals']}**
-├ Активных пользователей: **{stats['users']}**
-└ Конверсия в VIP: **{round(stats['vip']/stats['users']*100 if stats['users'] else 0, 1)}%**
+👥 Всего пользователей: {stats['users']}
+👑 VIP пользователей: {stats['vip']}
+💰 Монет в системе: {stats['total_balance']}
     """
     
-    await callback.message.edit_text(
-        text,
-        reply_markup=Keyboards.admin(),
-        parse_mode="Markdown"
-    )
+    await callback.message.edit_text(text, reply_markup=Keyboards.admin(), parse_mode="Markdown")
 
-# ========== ОБРАБОТКА ТЕКСТОВЫХ СООБЩЕНИЙ ==========
-@dp.message()
-async def handle_all_messages(message: Message):
-    """Обработка всех сообщений"""
-    if message.text and message.text.startswith('/'):
-        # Если команда не обработана
-        await message.answer(
-            f"❌ Неизвестная команда: {message.text}\n\n"
-            f"Используй /help для списка команд или /menu для открытия меню.",
-            reply_markup=Keyboards.main()
-        )
-    else:
-        # Любое другое сообщение
-        await message.answer(
-            f"👋 Привет, {message.from_user.first_name}!\n\n"
-            f"Я бот {BOT_NAME}. Используй кнопки меню или команду /help.",
-            reply_markup=Keyboards.main()
-        )
-
-# ========== ЗАПУСК БОТА ==========
+# ========== ЗАПУСК ==========
 async def on_startup():
-    """Действия при запуске"""
-    print(f"\n{Colors.CYAN}{'='*60}{Colors.END}")
-    print(f"{Colors.MAGENTA}{Colors.BOLD}🔥 SHIZOGP БОТ - РАЗЪЕБАЛОВО-ВЕРСИЯ 🔥{Colors.END}")
-    print(f"{Colors.CYAN}{'='*60}{Colors.END}")
+    """Запуск"""
+    print(f"\n{Colors.CYAN}{'='*50}{Colors.END}")
+    print(f"{Colors.MAGENTA}🔥 SHIZOGP БОТ ЗАПУЩЕН 🔥{Colors.END}")
+    print(f"{Colors.CYAN}{'='*50}{Colors.END}")
     print(f"{Colors.GREEN}✅ Версия: {BOT_VERSION}{Colors.END}")
-    print(f"{Colors.GREEN}✅ Токен: {BOT_TOKEN[:15]}...{Colors.END}")
-    print(f"{Colors.GREEN}✅ Админы: {ADMIN_IDS}{Colors.END}")
-    print(f"{Colors.GREEN}✅ База данных: {DATABASE_PATH}{Colors.END}")
     
-    # Инициализация БД
     await db.init_db()
     
-    # Информация о боте
     me = await bot.get_me()
     print(f"{Colors.GREEN}✅ Бот: @{me.username}{Colors.END}")
     print(f"{Colors.GREEN}✅ ID: {me.id}{Colors.END}")
-    print(f"{Colors.GREEN}✅ Имя: {me.full_name}{Colors.END}")
-    
-    print(f"{Colors.CYAN}{'='*60}{Colors.END}")
-    print(f"{Colors.YELLOW}{Colors.BOLD}🚀 БОТ ЗАПУЩЕН И ГОТОВ К РАБОТЕ!{Colors.END}")
-    print(f"{Colors.CYAN}{'='*60}{Colors.END}")
+    print(f"{Colors.CYAN}{'='*50}{Colors.END}")
 
 async def on_shutdown():
-    """Действия при остановке"""
-    print(f"\n{Colors.RED}👋 БОТ ОСТАНАВЛИВАЕТСЯ...{Colors.END}")
+    """Остановка"""
+    print(f"\n{Colors.RED}👋 БОТ ОСТАНОВЛЕН{Colors.END}")
 
 async def main():
-    """Главная функция"""
     await on_startup()
-    
     try:
         await dp.start_polling(bot)
     except KeyboardInterrupt:
-        print(f"\n{Colors.YELLOW}⚠️ Получен сигнал остановки{Colors.END}")
-    except Exception as e:
-        print(f"\n{Colors.RED}❌ Ошибка: {e}{Colors.END}")
+        print(f"\n{Colors.YELLOW}⚠️ Остановка...{Colors.END}")
     finally:
         await on_shutdown()
         await bot.session.close()
-        print(f"{Colors.GREEN}✅ Бот успешно остановлен{Colors.END}")
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print(f"\n{Colors.YELLOW}⚠️ Бот остановлен пользователем{Colors.END}")
-    except Exception as e:
-        print(f"\n{Colors.RED}❌ Критическая ошибка: {e}{Colors.END}")
+    asyncio.run(main())
