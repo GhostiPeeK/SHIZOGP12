@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🔥 SHIZOGP - ИСПРАВЛЕННАЯ ВЕРСИЯ
+🔥 SHIZOGP - ПОЛНАЯ ВЕРСИЯ С АВТОУСТАНОВКОЙ
+✅ Сам устанавливает все библиотеки
 ✅ VIP ссылка работает
 ✅ Магазин работает
-✅ Админка работает
 ✅ Удержание баланса
 ✅ Удержание скинов
 """
@@ -16,42 +16,50 @@ import importlib.util
 import json
 import asyncio
 import logging
-import aiosqlite
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Any
 
-# ========== АВТОУСТАНОВКА БИБЛИОТЕК ==========
+# ========== АВТОУСТАНОВКА ВСЕХ БИБЛИОТЕК ==========
 def install_package(package):
+    """Установка пакета через pip"""
     print(f"🔄 Устанавливаю {package}...")
     try:
         subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", package])
         print(f"✅ {package} установлен!")
         return True
-    except:
-        print(f"❌ Ошибка установки {package}")
+    except Exception as e:
+        print(f"❌ Ошибка установки {package}: {e}")
         return False
 
+# Список необходимых библиотек
 required_packages = [
     "aiogram==3.4.1",
     "aiosqlite==0.19.0",
     "python-dotenv==1.0.0"
 ]
 
+# Проверяем и устанавливаем каждую библиотеку
 for package in required_packages:
     package_name = package.split("==")[0]
-    if importlib.util.find_spec(package_name) is None:
-        print(f"⚠️ Библиотека {package_name} не найдена")
-        install_package(package)
+    spec = importlib.util.find_spec(package_name)
+    if spec is None:
+        print(f"⚠️ Библиотека {package_name} не найдена, устанавливаю...")
+        if not install_package(package):
+            print(f"❌ Критическая ошибка: не удалось установить {package_name}")
+            sys.exit(1)
     else:
         print(f"✅ {package_name} уже установлен")
 
-# ========== ИМПОРТЫ ==========
+# ========== ТЕПЕРЬ МОЖНО ИМПОРТИРОВАТЬ ==========
+print("🚀 Загрузка бота...")
+
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
+import aiosqlite
 
 try:
     from dotenv import load_dotenv
@@ -72,7 +80,7 @@ REFERRAL_BONUS = 50
 START_BALANCE = 100
 DAILY_BONUS = 10
 DATABASE_PATH = "shizogp.db"
-BOT_VERSION = "5.0 (ВСЁ ИСПРАВЛЕНО)"
+BOT_VERSION = "5.1 (АВТОУСТАНОВКА)"
 BOT_NAME = "SHIZOGP"
 
 # ========== НАСТРОЙКА ЛОГИРОВАНИЯ ==========
@@ -479,7 +487,6 @@ class Keyboards:
             [InlineKeyboardButton(text="💰 ПОПОЛНИТЬ БАЛАНС", callback_data="admin_add_balance")],
             [InlineKeyboardButton(text="👑 ВЫДАТЬ VIP", callback_data="admin_give_vip")],
             [InlineKeyboardButton(text="🛒 ДОБАВИТЬ СКИН", callback_data="admin_add_skin")],
-            [InlineKeyboardButton(text="📢 РАССЫЛКА", callback_data="admin_broadcast")],
             [InlineKeyboardButton(text="◀ НАЗАД", callback_data="main_menu")]
         ]
         return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -513,7 +520,6 @@ class States(StatesGroup):
     admin_add_skin_name = State()
     admin_add_skin_quality = State()
     admin_add_skin_price = State()
-    admin_broadcast_text = State()
 
 # ========== ИНИЦИАЛИЗАЦИЯ БОТА ==========
 bot = Bot(token=BOT_TOKEN)
@@ -548,11 +554,11 @@ async def cmd_start(message: Message):
 ├ 👥 Рефералов: **{user['referral_count']}**
 └ 👑 VIP: {"✅" if is_vip else "❌"}
 
-🔥 **Версия 5.0 - ВСЁ ИСПРАВЛЕНО!**
+🔥 **Версия с автоустановкой!**
+├ ✅ Все библиотеки установлены
 ├ ✅ VIP ссылка работает
 ├ ✅ Магазин работает
-├ ✅ Удержание баланса
-└ ✅ Удержание скинов
+└ ✅ Удержание баланса
 
 ⚡ **Выбери действие в меню ниже!**
     """
@@ -846,27 +852,6 @@ async def callback_buy_vip(callback: CallbackQuery):
                 )
             except:
                 pass
-        
-        # Пытаемся отправить сообщение в VIP чат
-        try:
-            # Пытаемся получить ID чата из ссылки
-            chat_id = None
-            if VIP_CHAT_LINK.startswith('https://t.me/+'):
-                # Это приватная ссылка-приглашение, нельзя отправить сообщение
-                pass
-            else:
-                chat_id = VIP_CHAT_LINK.split('/')[-1]
-                if chat_id.isdigit():
-                    chat_id = int(chat_id)
-            
-            if chat_id:
-                await bot.send_message(
-                    chat_id,
-                    f"🎉 **Новый VIP-участник!**\n\n👤 @{callback.from_user.username or 'Аноним'} только что приобрёл VIP статус!\n🔥 Встречайте нового члена закрытого клуба!",
-                    parse_mode="Markdown"
-                )
-        except Exception as e:
-            logger.error(f"Не удалось отправить сообщение в VIP чат: {e}")
     else:
         need = VIP_PRICE - user['balance']
         await callback.message.edit_text(
@@ -970,11 +955,8 @@ async def callback_shop(callback: CallbackQuery):
         )
         return
     
-    text = "🛒 **МАГАЗИН СКИНОВ**\n\n"
-    text += "🔥 **Доступные скины:**\n\n"
-    
     await callback.message.edit_text(
-        text,
+        "🛒 **МАГАЗИН СКИНОВ**\n\n🔥 **Выбери скин для покупки:**",
         reply_markup=Keyboards.shop(skins),
         parse_mode="Markdown"
     )
@@ -1154,8 +1136,7 @@ async def cmd_admin(message: Message):
 ├ 📊 Просмотр статистики
 ├ 💰 Пополнение баланса
 ├ 👑 Выдача VIP
-├ 🛒 Добавление скинов
-└ 📢 Рассылка
+└ 🛒 Добавление скинов
     """
     
     await message.answer(text, reply_markup=Keyboards.admin(), parse_mode="Markdown")
@@ -1304,7 +1285,7 @@ async def admin_add_skin_price(message: Message, state: FSMContext):
 # ========== ЗАПУСК ==========
 async def on_startup():
     print(f"\n{Colors.CYAN}{'='*60}{Colors.END}")
-    print(f"{Colors.MAGENTA}{Colors.BOLD}🔥 SHIZOGP - ИСПРАВЛЕННАЯ ВЕРСИЯ 🔥{Colors.END}")
+    print(f"{Colors.MAGENTA}{Colors.BOLD}🔥 SHIZOGP - АВТОУСТАНОВКА 🔥{Colors.END}")
     print(f"{Colors.CYAN}{'='*60}{Colors.END}")
     print(f"{Colors.GREEN}✅ Версия: {BOT_VERSION}{Colors.END}")
     print(f"{Colors.GREEN}✅ Токен: {BOT_TOKEN[:15]}...{Colors.END}")
@@ -1317,7 +1298,6 @@ async def on_startup():
     print(f"{Colors.GREEN}✅ Бот: @{me.username}{Colors.END}")
     print(f"{Colors.GREEN}✅ ID: {me.id}{Colors.END}")
     print(f"{Colors.GREEN}✅ Удержание баланса: АКТИВНО{Colors.END}")
-    print(f"{Colors.GREEN}✅ Удержание скинов: АКТИВНО{Colors.END}")
     print(f"{Colors.CYAN}{'='*60}{Colors.END}")
     print(f"{Colors.YELLOW}{Colors.BOLD}🚀 БОТ ЗАПУЩЕН И ГОТОВ К РАБОТЕ!{Colors.END}")
     print(f"{Colors.CYAN}{'='*60}{Colors.END}")
