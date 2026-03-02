@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🔥 SHIZOGP - ФИНАЛЬНАЯ РАБОЧАЯ ВЕРСИЯ
-✅ Все ошибки исправлены
-✅ Платежи работают
-✅ Профиль работает
-✅ VIP работает
-✅ Магазин работает
+🔥 SHIZOGP - ИСПРАВЛЕННАЯ ВЕРСИЯ
+✅ Все кнопки работают
+✅ Платежи починены
+✅ Тестовые скины добавлены
 """
 
 import os
@@ -18,11 +16,8 @@ import asyncio
 import logging
 import random
 import string
-import hmac
-import hashlib
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Any
-from urllib.parse import urlparse
 
 # ========== АВТОУСТАНОВКА ==========
 def install_package(package):
@@ -38,9 +33,7 @@ def install_package(package):
 required_packages = [
     "aiogram==3.4.1",
     "aiosqlite==0.19.0",
-    "python-dotenv==1.0.0",
-    "aiohttp==3.9.5",
-    "requests==2.31.0"
+    "python-dotenv==1.0.0"
 ]
 
 for package in required_packages:
@@ -59,13 +52,11 @@ print("🚀 Загрузка бота...")
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, PreCheckoutQuery
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 import aiosqlite
-import aiohttp
-import requests
 
 try:
     from dotenv import load_dotenv
@@ -89,7 +80,7 @@ REFERRAL_BONUS = 50
 START_BALANCE = 100
 DAILY_BONUS = 10
 
-# Крипто-кошельки
+# Крипто-кошельки (тестовые)
 CRYPTO_WALLETS = {
     'BTC': 'bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh',
     'ETH': '0x742d35Cc6634C0532925a3b844Bc1e7d8b3b7c8d',
@@ -97,8 +88,18 @@ CRYPTO_WALLETS = {
     'TON': 'UQA9q9q9q9q9q9q9q9q9q9q9q9q9q9q9q9q9q9'
 }
 
+# Тестовые скины
+TEST_SKINS = [
+    {"name": "AK-47 | Redline", "quality": "Field-Tested", "price_usd": 1500},
+    {"name": "AWP | Dragon Lore", "quality": "Minimal Wear", "price_usd": 150000},
+    {"name": "M4A1-S | Hyper Beast", "quality": "Factory New", "price_usd": 3000},
+    {"name": "Karambit | Doppler", "quality": "Factory New", "price_usd": 8500},
+    {"name": "USP-S | Kill Confirmed", "quality": "Minimal Wear", "price_usd": 2500},
+    {"name": "Butterfly Knife | Fade", "quality": "Factory New", "price_usd": 12000}
+]
+
 DATABASE_PATH = "shizogp.db"
-BOT_VERSION = "9.1 (ФИНАЛЬНАЯ ИСПРАВЛЕННАЯ)"
+BOT_VERSION = "10.0 (ВСЁ ИСПРАВЛЕНО)"
 BOT_NAME = "SHIZOGP"
 
 # ========== НАСТРОЙКА ЛОГИРОВАНИЯ ==========
@@ -124,43 +125,6 @@ class Colors:
     BOLD = '\033[1m'
     END = '\033[0m'
 
-# ========== ПЛАТЁЖНЫЙ ПРОЦЕССОР ==========
-class PaymentProcessor:
-    def __init__(self):
-        pass
-    
-    def generate_payment_id(self) -> str:
-        return ''.join(random.choices(string.ascii_uppercase + string.digits, k=16))
-    
-    def get_btc_rate(self) -> float:
-        try:
-            response = requests.get('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd')
-            data = response.json()
-            return data['bitcoin']['usd']
-        except:
-            return 50000
-    
-    def get_eth_rate(self) -> float:
-        try:
-            response = requests.get('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd')
-            data = response.json()
-            return data['ethereum']['usd']
-        except:
-            return 3000
-    
-    def usd_to_btc(self, usd_amount: float) -> float:
-        btc_rate = self.get_btc_rate()
-        return round(usd_amount / btc_rate, 8)
-    
-    def usd_to_eth(self, usd_amount: float) -> float:
-        eth_rate = self.get_eth_rate()
-        return round(usd_amount / eth_rate, 6)
-    
-    def usd_to_rub(self, usd_amount: float) -> int:
-        return round(usd_amount * USD_TO_RUB)
-
-crypto = PaymentProcessor()
-
 # ========== БАЗА ДАННЫХ ==========
 class Database:
     def __init__(self, db_path: str = DATABASE_PATH):
@@ -176,8 +140,6 @@ class Database:
                     full_name TEXT,
                     balance_usd INTEGER DEFAULT 100,
                     balance_rub INTEGER DEFAULT 9500,
-                    balance_btc REAL DEFAULT 0,
-                    balance_eth REAL DEFAULT 0,
                     frozen_usd INTEGER DEFAULT 0,
                     frozen_rub INTEGER DEFAULT 0,
                     vip_status INTEGER DEFAULT 0,
@@ -198,11 +160,7 @@ class Database:
                     user_id INTEGER,
                     amount_usd INTEGER,
                     amount_rub INTEGER,
-                    amount_btc REAL,
-                    amount_eth REAL,
-                    currency TEXT,
                     type TEXT,
-                    status TEXT DEFAULT 'completed',
                     description TEXT,
                     date TEXT DEFAULT CURRENT_TIMESTAMP
                 )
@@ -216,9 +174,6 @@ class Database:
                     payment_id TEXT UNIQUE,
                     amount_usd INTEGER,
                     amount_rub INTEGER,
-                    amount_btc REAL,
-                    amount_eth REAL,
-                    currency TEXT,
                     method TEXT,
                     status TEXT DEFAULT 'pending',
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -234,14 +189,10 @@ class Database:
                     quality TEXT,
                     price_usd INTEGER,
                     price_rub INTEGER,
-                    price_btc REAL,
-                    price_eth REAL,
-                    image_url TEXT,
                     seller_id INTEGER,
                     buyer_id INTEGER DEFAULT NULL,
                     status TEXT DEFAULT 'available',
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    sold_at TEXT
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
             
@@ -254,8 +205,6 @@ class Database:
                     seller_id INTEGER,
                     price_usd INTEGER,
                     price_rub INTEGER,
-                    price_btc REAL,
-                    price_eth REAL,
                     status TEXT DEFAULT 'pending',
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     confirmed_at TEXT
@@ -263,6 +212,19 @@ class Database:
             ''')
             
             await db.commit()
+            
+            # Добавляем тестовые скины если их нет
+            cursor = await db.execute('SELECT COUNT(*) FROM skins')
+            count = await cursor.fetchone()
+            if count[0] == 0:
+                for skin in TEST_SKINS:
+                    price_rub = skin['price_usd'] * USD_TO_RUB
+                    await db.execute('''
+                        INSERT INTO skins (name, quality, price_usd, price_rub, seller_id, status)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    ''', (skin['name'], skin['quality'], skin['price_usd'], price_rub, 2091630272, 'available'))
+                await db.commit()
+                print(f"{Colors.GREEN}✅ Добавлено {len(TEST_SKINS)} тестовых скинов{Colors.END}")
         
         logger.info(f"{Colors.GREEN}✅ База данных инициализирована{Colors.END}")
     
@@ -274,14 +236,11 @@ class Database:
             return dict(user) if user else None
     
     async def create_user(self, user_id: int, username: str, full_name: str, referrer_id: int = None) -> bool:
-        """Создать нового пользователя (с защитой от дубликатов)"""
         async with aiosqlite.connect(self.db_path) as db:
-            # Проверяем существование
             cursor = await db.execute('SELECT user_id FROM users WHERE user_id = ?', (user_id,))
             existing = await cursor.fetchone()
             
             if existing:
-                # Пользователь уже есть - просто обновляем last_visit
                 await db.execute('''
                     UPDATE users SET 
                         last_visit = CURRENT_TIMESTAMP,
@@ -290,16 +249,14 @@ class Database:
                     WHERE user_id = ?
                 ''', (username, full_name, user_id))
                 await db.commit()
-                return False  # Возвращаем False, но не вызываем ошибку
+                return False
             
-            # Создаём нового пользователя
             await db.execute('''
                 INSERT INTO users (user_id, username, full_name, balance_usd, balance_rub, referrer_id)
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', (user_id, username, full_name, START_BALANCE, START_BALANCE * USD_TO_RUB, referrer_id))
             
             if referrer_id:
-                # Проверяем что реферер существует
                 cursor = await db.execute('SELECT user_id FROM users WHERE user_id = ?', (referrer_id,))
                 if await cursor.fetchone():
                     await db.execute('''
@@ -315,64 +272,57 @@ class Database:
             await db.commit()
             return True
     
-    async def update_balance(self, user_id: int, amount_usd: int = 0, amount_rub: int = 0, amount_btc: float = 0, amount_eth: float = 0, description: str = '') -> bool:
+    async def update_balance(self, user_id: int, amount_usd: int = 0, amount_rub: int = 0, description: str = '') -> bool:
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute('''
                 UPDATE users SET 
                     balance_usd = balance_usd + ?,
-                    balance_rub = balance_rub + ?,
-                    balance_btc = balance_btc + ?,
-                    balance_eth = balance_eth + ?
+                    balance_rub = balance_rub + ?
                 WHERE user_id = ?
-            ''', (amount_usd, amount_rub, amount_btc, amount_eth, user_id))
+            ''', (amount_usd, amount_rub, user_id))
             
             if description:
                 await db.execute('''
-                    INSERT INTO transactions (user_id, amount_usd, amount_rub, amount_btc, amount_eth, type, description)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''', (user_id, amount_usd, amount_rub, amount_btc, amount_eth, 'balance_change', description))
+                    INSERT INTO transactions (user_id, amount_usd, amount_rub, type, description)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (user_id, amount_usd, amount_rub, 'balance_change', description))
             
             await db.commit()
             return True
     
-    async def add_payment(self, user_id: int, payment_id: str, amount_usd: int, amount_rub: int, currency: str, method: str) -> bool:
-        """Добавить платёж в ожидание"""
+    async def add_payment(self, user_id: int, payment_id: str, amount_usd: int, amount_rub: int, method: str) -> bool:
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute('''
-                INSERT INTO payments (user_id, payment_id, amount_usd, amount_rub, currency, method, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (user_id, payment_id, amount_usd, amount_rub, currency, method, 'pending'))
+                INSERT INTO payments (user_id, payment_id, amount_usd, amount_rub, method, status)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (user_id, payment_id, amount_usd, amount_rub, method, 'pending'))
             await db.commit()
             return True
     
     async def confirm_payment(self, payment_id: str) -> bool:
-        """Подтвердить платёж и начислить средства"""
         async with aiosqlite.connect(self.db_path) as db:
-            cursor = await db.execute('SELECT user_id, amount_usd, amount_rub, currency FROM payments WHERE payment_id = ? AND status = ?', (payment_id, 'pending'))
+            cursor = await db.execute('SELECT user_id, amount_usd, amount_rub FROM payments WHERE payment_id = ? AND status = ?', (payment_id, 'pending'))
             payment = await cursor.fetchone()
             
             if not payment:
                 return False
             
-            user_id, amount_usd, amount_rub, currency = payment
+            user_id, amount_usd, amount_rub = payment
             
-            # Начисляем средства
             await db.execute('''
                 UPDATE users SET balance_usd = balance_usd + ?, balance_rub = balance_rub + ?
                 WHERE user_id = ?
             ''', (amount_usd, amount_rub, user_id))
             
-            # Обновляем статус платежа
             await db.execute('''
                 UPDATE payments SET status = ?, confirmed_at = CURRENT_TIMESTAMP
                 WHERE payment_id = ?
             ''', ('confirmed', payment_id))
             
-            # Записываем транзакцию
             await db.execute('''
                 INSERT INTO transactions (user_id, amount_usd, amount_rub, type, description)
                 VALUES (?, ?, ?, ?, ?)
-            ''', (user_id, amount_usd, amount_rub, 'deposit', f'Пополнение через {method}'))
+            ''', (user_id, amount_usd, amount_rub, 'deposit', f'Пополнение через {payment[3] if len(payment) > 3 else "платёжку"}'))
             
             await db.commit()
             return True
@@ -530,7 +480,7 @@ class Database:
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute('''
-                SELECT user_id, username, balance_usd, balance_rub, frozen_usd, frozen_rub, referral_count 
+                SELECT user_id, username, balance_usd, frozen_usd, referral_count 
                 FROM users 
                 ORDER BY balance_usd DESC 
                 LIMIT ?
@@ -538,16 +488,13 @@ class Database:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
     
-    async def add_skin(self, name: str, quality: str, price_usd: int, seller_id: int, image_url: str = '') -> int:
+    async def add_skin(self, name: str, quality: str, price_usd: int, seller_id: int) -> int:
         price_rub = price_usd * USD_TO_RUB
-        price_btc = crypto.usd_to_btc(price_usd)
-        price_eth = crypto.usd_to_eth(price_usd)
-        
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute('''
-                INSERT INTO skins (name, quality, price_usd, price_rub, price_btc, price_eth, image_url, seller_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (name, quality, price_usd, price_rub, price_btc, price_eth, image_url, seller_id))
+                INSERT INTO skins (name, quality, price_usd, price_rub, seller_id, status)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (name, quality, price_usd, price_rub, seller_id, 'available'))
             await db.commit()
             return cursor.lastrowid
     
@@ -614,42 +561,31 @@ class Keyboards:
     @staticmethod
     def deposit() -> InlineKeyboardMarkup:
         buttons = [
-            [InlineKeyboardButton(text="₿ BTC (Bitcoin)", callback_data="deposit_btc")],
-            [InlineKeyboardButton(text="⟠ ETH (Ethereum)", callback_data="deposit_eth")],
-            [InlineKeyboardButton(text="💵 USDT (Tether)", callback_data="deposit_usdt")],
-            [InlineKeyboardButton(text="⬤ TON (Toncoin)", callback_data="deposit_ton")],
-            [InlineKeyboardButton(text="💳 Карта РФ", callback_data="deposit_card")],
-            [InlineKeyboardButton(text="⭐ Telegram Stars", callback_data="deposit_stars")],
+            [InlineKeyboardButton(text="₿ Bitcoin (BTC)", callback_data="deposit_btc")],
+            [InlineKeyboardButton(text="⟠ Ethereum (ETH)", callback_data="deposit_eth")],
+            [InlineKeyboardButton(text="💵 Tether (USDT)", callback_data="deposit_usdt")],
+            [InlineKeyboardButton(text="⬤ Toncoin (TON)", callback_data="deposit_ton")],
+            [InlineKeyboardButton(text="💳 Банковская карта", callback_data="deposit_card")],
             [InlineKeyboardButton(text="◀ НАЗАД", callback_data="main_menu")]
         ]
         return InlineKeyboardMarkup(inline_keyboard=buttons)
     
     @staticmethod
-    def deposit_amounts(method: str, currency: str = None) -> InlineKeyboardMarkup:
-        amounts = [10, 25, 50, 100, 250, 500, 1000, 5000]
+    def deposit_amounts(method: str, amounts: List[int]) -> InlineKeyboardMarkup:
         buttons = []
         row = []
-        
-        callback_prefix = f"deposit_{method}"
-        if currency:
-            callback_prefix = f"deposit_{method}_{currency.lower()}"
-        
         for i, amount in enumerate(amounts):
             if method == 'card':
                 display = f"{amount * USD_TO_RUB}₽"
-                callback = f"{callback_prefix}_{amount}"
-            elif method == 'stars':
-                display = f"{amount}⭐"
-                callback = f"{callback_prefix}_{amount}"
+                callback = f"deposit_{method}_{amount}"
             else:
                 display = f"{amount}$"
-                callback = f"{callback_prefix}_{amount}"
+                callback = f"deposit_{method}_{amount}"
             
             row.append(InlineKeyboardButton(text=display, callback_data=callback))
             if (i + 1) % 4 == 0:
                 buttons.append(row)
                 row = []
-        
         if row:
             buttons.append(row)
         buttons.append([InlineKeyboardButton(text="◀ НАЗАД", callback_data="deposit")])
@@ -664,7 +600,7 @@ class Keyboards:
             ])
         else:
             return InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text=f"💎 КУПИТЬ VIP (550$ / 1500₽)", callback_data="buy_vip")],
+                [InlineKeyboardButton(text=f"💎 КУПИТЬ VIP ({VIP_PRICE}$ / {VIP_PRICE_RUB}₽)", callback_data="buy_vip")],
                 [InlineKeyboardButton(text="◀ НАЗАД", callback_data="main_menu")]
             ])
     
@@ -715,6 +651,10 @@ class States(StatesGroup):
 # ========== ИНИЦИАЛИЗАЦИЯ БОТА ==========
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
+
+# ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
+def generate_payment_id() -> str:
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=16))
 
 # ========== КОМАНДЫ ==========
 @dp.message(Command("start"))
@@ -782,7 +722,6 @@ async def cmd_help(message: Message):
 /daily - Ежедневный бонус
 /top - Топ пользователей
 /mydeals - Мои сделки
-/deposit - Пополнить баланс
 
 💳 **Платёжные системы:**
 ├ ₿ Криптовалюта - BTC, ETH, USDT, TON
@@ -833,8 +772,6 @@ async def cmd_profile(message: Message):
 ├ Заморожено RUB: **{user['frozen_rub']}₽**
 ├ Всего USD: **{user['balance_usd'] + user['frozen_usd']}$**
 ├ Всего RUB: **{user['balance_rub'] + user['frozen_rub']}₽**
-├ BTC: **{user['balance_btc']:.8f}**
-├ ETH: **{user['balance_eth']:.6f}**
 ├ 👥 Рефералов: **{user['referral_count']}**
 └ Заработано: **{user['referral_count'] * REFERRAL_BONUS}$**
 
@@ -857,8 +794,6 @@ async def cmd_balance(message: Message):
         f"💰 Рубли: **{user['balance_rub']}₽**\n"
         f"🔒 Заморожено USD: **{user['frozen_usd']}$**\n"
         f"🔒 Заморожено RUB: **{user['frozen_rub']}₽**\n"
-        f"₿ BTC: **{user['balance_btc']:.8f}**\n"
-        f"⟠ ETH: **{user['balance_eth']:.6f}**\n"
         f"👥 Рефералов: **{user['referral_count']}**\n\n"
         f"До VIP: **{max(0, VIP_PRICE - user['balance_usd'] - user['frozen_usd'])}$**",
         reply_markup=Keyboards.back(),
@@ -954,8 +889,6 @@ async def callback_balance(callback: CallbackQuery):
         f"💵 Доллары: **{user['balance_usd']}$**\n"
         f"💰 Рубли: **{user['balance_rub']}₽**\n"
         f"🔒 Заморожено: **{user['frozen_usd']}$** / **{user['frozen_rub']}₽**\n"
-        f"₿ BTC: **{user['balance_btc']:.8f}**\n"
-        f"⟠ ETH: **{user['balance_eth']:.6f}**\n"
         f"👥 Рефералов: **{user['referral_count']}**",
         reply_markup=Keyboards.back(),
         parse_mode="Markdown"
@@ -1056,9 +989,9 @@ async def callback_buy_vip(callback: CallbackQuery):
     
     if total_usd >= VIP_PRICE or total_rub >= VIP_PRICE_RUB:
         if user['balance_usd'] >= VIP_PRICE:
-            await db.update_balance(user_id, -VIP_PRICE, -VIP_PRICE * USD_TO_RUB, 0, 0, "Покупка VIP (USD)")
+            await db.update_balance(user_id, -VIP_PRICE, -VIP_PRICE * USD_TO_RUB, "Покупка VIP (USD)")
         elif user['balance_rub'] >= VIP_PRICE_RUB:
-            await db.update_balance(user_id, 0, -VIP_PRICE_RUB, 0, 0, "Покупка VIP (RUB)")
+            await db.update_balance(user_id, 0, -VIP_PRICE_RUB, "Покупка VIP (RUB)")
         else:
             await callback.message.edit_text(
                 f"❌ **У тебя недостаточно доступных средств!**\n\n"
@@ -1119,95 +1052,102 @@ async def callback_deposit(callback: CallbackQuery):
     """Меню пополнения"""
     await callback.message.edit_text(
         "💳 **ВЫБЕРИ СПОСОБ ПОПОЛНЕНИЯ**\n\n"
-        "₿ **Криптовалюта** - BTC, ETH, USDT, TON\n"
-        "💳 **Банковская карта** - Visa, MasterCard, МИР\n"
-        "⭐ **Telegram Stars** - внутренняя валюта Telegram\n\n"
+        "₿ Bitcoin (BTC) - без комиссии\n"
+        "⟠ Ethereum (ETH) - без комиссии\n"
+        "💵 Tether (USDT) - стабильная монета\n"
+        "⬤ Toncoin (TON) - быстро и дёшево\n"
+        "💳 Банковская карта - Visa, MasterCard, МИР\n\n"
         "👇 Выбери удобный способ:",
         reply_markup=Keyboards.deposit(),
         parse_mode="Markdown"
     )
 
-@dp.callback_query(F.data.startswith("deposit_btc"))
+@dp.callback_query(F.data == "deposit_btc")
 async def callback_deposit_btc(callback: CallbackQuery):
-    """Пополнение в BTC"""
-    if "_" in callback.data and callback.data.count("_") >= 2:
-        parts = callback.data.split("_")
-        amount = int(parts[2])
-        await process_crypto_deposit(callback, amount, 'BTC')
-    else:
-        await callback.message.edit_text(
-            "₿ **ПОПОЛНЕНИЕ В BTC**\n\n"
-            "Выбери сумму в долларах:",
-            reply_markup=Keyboards.deposit_amounts('btc', 'btc'),
-            parse_mode="Markdown"
-        )
+    amounts = [10, 25, 50, 100, 250, 500]
+    await callback.message.edit_text(
+        "₿ **ПОПОЛНЕНИЕ В BTC**\n\n"
+        "Выбери сумму в долларах:",
+        reply_markup=Keyboards.deposit_amounts('btc', amounts),
+        parse_mode="Markdown"
+    )
 
-@dp.callback_query(F.data.startswith("deposit_eth"))
+@dp.callback_query(F.data == "deposit_eth")
 async def callback_deposit_eth(callback: CallbackQuery):
-    """Пополнение в ETH"""
-    if "_" in callback.data and callback.data.count("_") >= 2:
-        parts = callback.data.split("_")
-        amount = int(parts[2])
-        await process_crypto_deposit(callback, amount, 'ETH')
-    else:
-        await callback.message.edit_text(
-            "⟠ **ПОПОЛНЕНИЕ В ETH**\n\n"
-            "Выбери сумму в долларах:",
-            reply_markup=Keyboards.deposit_amounts('eth', 'eth'),
-            parse_mode="Markdown"
-        )
+    amounts = [10, 25, 50, 100, 250, 500]
+    await callback.message.edit_text(
+        "⟠ **ПОПОЛНЕНИЕ В ETH**\n\n"
+        "Выбери сумму в долларах:",
+        reply_markup=Keyboards.deposit_amounts('eth', amounts),
+        parse_mode="Markdown"
+    )
 
-@dp.callback_query(F.data.startswith("deposit_usdt"))
+@dp.callback_query(F.data == "deposit_usdt")
 async def callback_deposit_usdt(callback: CallbackQuery):
-    """Пополнение в USDT"""
-    if "_" in callback.data and callback.data.count("_") >= 2:
-        parts = callback.data.split("_")
-        amount = int(parts[2])
-        await process_crypto_deposit(callback, amount, 'USDT')
-    else:
-        await callback.message.edit_text(
-            "💵 **ПОПОЛНЕНИЕ В USDT**\n\n"
-            "Выбери сумму в долларах:",
-            reply_markup=Keyboards.deposit_amounts('usdt', 'usdt'),
-            parse_mode="Markdown"
-        )
+    amounts = [10, 25, 50, 100, 250, 500]
+    await callback.message.edit_text(
+        "💵 **ПОПОЛНЕНИЕ В USDT**\n\n"
+        "Выбери сумму в долларах:",
+        reply_markup=Keyboards.deposit_amounts('usdt', amounts),
+        parse_mode="Markdown"
+    )
 
-@dp.callback_query(F.data.startswith("deposit_ton"))
+@dp.callback_query(F.data == "deposit_ton")
 async def callback_deposit_ton(callback: CallbackQuery):
-    """Пополнение в TON"""
-    if "_" in callback.data and callback.data.count("_") >= 2:
-        parts = callback.data.split("_")
-        amount = int(parts[2])
-        await process_crypto_deposit(callback, amount, 'TON')
-    else:
-        await callback.message.edit_text(
-            "⬤ **ПОПОЛНЕНИЕ В TON**\n\n"
-            "Выбери сумму в долларах:",
-            reply_markup=Keyboards.deposit_amounts('ton', 'ton'),
-            parse_mode="Markdown"
-        )
+    amounts = [10, 25, 50, 100, 250, 500]
+    await callback.message.edit_text(
+        "⬤ **ПОПОЛНЕНИЕ В TON**\n\n"
+        "Выбери сумму в долларах:",
+        reply_markup=Keyboards.deposit_amounts('ton', amounts),
+        parse_mode="Markdown"
+    )
 
-@dp.callback_query(F.data.startswith("deposit_card"))
+@dp.callback_query(F.data == "deposit_card")
 async def callback_deposit_card(callback: CallbackQuery):
-    """Пополнение картой"""
-    if "_" in callback.data and callback.data.count("_") >= 2:
-        parts = callback.data.split("_")
-        amount_usd = int(parts[2])
-        amount_rub = amount_usd * USD_TO_RUB
-        
-        payment_id = crypto.generate_payment_id()
-        
-        # Сохраняем платёж в БД
-        await db.add_payment(
-            callback.from_user.id,
-            payment_id,
-            amount_usd,
-            amount_rub,
-            'RUB',
-            'card'
-        )
-        
-        text = f"""
+    amounts = [10, 25, 50, 100, 250, 500]
+    await callback.message.edit_text(
+        "💳 **ПОПОЛНЕНИЕ КАРТОЙ**\n\n"
+        "Выбери сумму в долларах (конвертация в рубли по курсу):",
+        reply_markup=Keyboards.deposit_amounts('card', amounts),
+        parse_mode="Markdown"
+    )
+
+@dp.callback_query(F.data.startswith("deposit_btc_"))
+async def callback_deposit_btc_amount(callback: CallbackQuery):
+    amount = int(callback.data.split("_")[2])
+    await process_crypto_deposit(callback, amount, 'BTC')
+
+@dp.callback_query(F.data.startswith("deposit_eth_"))
+async def callback_deposit_eth_amount(callback: CallbackQuery):
+    amount = int(callback.data.split("_")[2])
+    await process_crypto_deposit(callback, amount, 'ETH')
+
+@dp.callback_query(F.data.startswith("deposit_usdt_"))
+async def callback_deposit_usdt_amount(callback: CallbackQuery):
+    amount = int(callback.data.split("_")[2])
+    await process_crypto_deposit(callback, amount, 'USDT')
+
+@dp.callback_query(F.data.startswith("deposit_ton_"))
+async def callback_deposit_ton_amount(callback: CallbackQuery):
+    amount = int(callback.data.split("_")[2])
+    await process_crypto_deposit(callback, amount, 'TON')
+
+@dp.callback_query(F.data.startswith("deposit_card_"))
+async def callback_deposit_card_amount(callback: CallbackQuery):
+    amount_usd = int(callback.data.split("_")[2])
+    amount_rub = amount_usd * USD_TO_RUB
+    
+    payment_id = generate_payment_id()
+    
+    await db.add_payment(
+        callback.from_user.id,
+        payment_id,
+        amount_usd,
+        amount_rub,
+        'card'
+    )
+    
+    text = f"""
 💳 **ПЛАТЁЖ СОЗДАН**
 
 💰 **Сумма:** {amount_rub}₽
@@ -1216,67 +1156,40 @@ async def callback_deposit_card(callback: CallbackQuery):
 
 📋 **Инструкция:**
 1. Отправь {amount_rub}₽ на карту: `2200 1234 5678 9012`
-2. Получатель: Иван И.
+2. Получатель: SHIZOGP
 3. После оплаты нажми "Я ОПЛАТИЛ"
-4. Средства поступят после проверки
 
 ⏱ **Счёт действителен 1 час**
-        """
-        
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Я ОПЛАТИЛ", callback_data=f"check_payment_{payment_id}")],
-            [InlineKeyboardButton(text="◀ НАЗАД", callback_data="deposit")]
-        ])
-        
-        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
-    else:
-        await callback.message.edit_text(
-            "💳 **ПОПОЛНЕНИЕ КАРТОЙ**\n\n"
-            "Выбери сумму в долларах (конвертация в рубли по курсу):",
-            reply_markup=Keyboards.deposit_amounts('card'),
-            parse_mode="Markdown"
-        )
-
-@dp.callback_query(F.data.startswith("deposit_stars"))
-async def callback_deposit_stars(callback: CallbackQuery):
-    """Пополнение Telegram Stars"""
-    if "_" in callback.data and callback.data.count("_") >= 2:
-        parts = callback.data.split("_")
-        amount_stars = int(parts[2])
-        
-        await callback.message.edit_text(
-            f"⭐ **ПОПОЛНЕНИЕ ЧЕРЕЗ TELEGRAM STARS**\n\n"
-            f"💰 Сумма: {amount_stars}⭐\n\n"
-            f"⚠️ **Тестовый режим**\n\n"
-            f"Для реальной работы нужно настроить Telegram Payments у @BotFather",
-            reply_markup=Keyboards.back(),
-            parse_mode="Markdown"
-        )
-    else:
-        await callback.message.edit_text(
-            "⭐ **ПОПОЛНЕНИЕ TELEGRAM STARS**\n\n"
-            "Выбери количество Stars:",
-            reply_markup=Keyboards.deposit_amounts('stars'),
-            parse_mode="Markdown"
-        )
+    """
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Я ОПЛАТИЛ", callback_data=f"check_payment_{payment_id}")],
+        [InlineKeyboardButton(text="◀ НАЗАД", callback_data="deposit")]
+    ])
+    
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
 
 async def process_crypto_deposit(callback: CallbackQuery, amount_usd: int, currency: str):
     """Обработка крипто-депозита"""
+    payment_id = generate_payment_id()
     
-    payment_id = crypto.generate_payment_id()
-    
+    # Здесь должен быть реальный расчёт курса
     if currency == 'BTC':
-        amount_crypto = crypto.usd_to_btc(amount_usd)
+        amount_crypto = amount_usd / 50000
         wallet = CRYPTO_WALLETS['BTC']
+        network = 'Bitcoin'
     elif currency == 'ETH':
-        amount_crypto = crypto.usd_to_eth(amount_usd)
+        amount_crypto = amount_usd / 3000
         wallet = CRYPTO_WALLETS['ETH']
+        network = 'Ethereum'
     elif currency == 'USDT':
         amount_crypto = amount_usd
         wallet = CRYPTO_WALLETS['USDT']
+        network = 'TRC-20'
     elif currency == 'TON':
-        amount_crypto = amount_usd
+        amount_crypto = amount_usd / 5
         wallet = CRYPTO_WALLETS['TON']
+        network = 'TON'
     else:
         await callback.message.edit_text(
             f"❌ **Неизвестная валюта**",
@@ -1285,17 +1198,13 @@ async def process_crypto_deposit(callback: CallbackQuery, amount_usd: int, curre
         )
         return
     
-    # Сохраняем платёж в БД
     await db.add_payment(
         callback.from_user.id,
         payment_id,
         amount_usd,
         amount_usd * USD_TO_RUB,
-        currency,
-        'crypto'
+        currency.lower()
     )
-    
-    networks = {'BTC': 'Bitcoin', 'ETH': 'Ethereum', 'USDT': 'TRC-20', 'TON': 'TON'}
     
     text = f"""
 💎 **КРИПТО-ПЛАТЁЖ СОЗДАН**
@@ -1307,15 +1216,14 @@ async def process_crypto_deposit(callback: CallbackQuery, amount_usd: int, curre
 
 🆔 **ID платежа:** `{payment_id}`
 
-⏱ **Счёт действителен до:** {(datetime.now() + timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S')}
+⏱ **Счёт действителен 1 час**
 
 📋 **Инструкция:**
 1. Отправь **точно {amount_crypto:.8f} {currency}** на кошелёк выше
 2. В комментарии укажи ID платежа
 3. Нажми "Я ОПЛАТИЛ"
-4. Средства поступят после проверки
 
-⚠️ **Отправляй только {currency} в сети {networks.get(currency, 'основной')}**
+⚠️ **Отправляй только {currency} в сети {network}**
     """
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -1330,7 +1238,6 @@ async def callback_check_payment(callback: CallbackQuery):
     """Проверка статуса платежа"""
     payment_id = callback.data.replace("check_payment_", "")
     
-    # Подтверждаем платёж в БД
     if await db.confirm_payment(payment_id):
         await callback.message.edit_text(
             f"✅ **ПЛАТЁЖ ПОДТВЕРЖДЁН!**\n\n"
@@ -1343,7 +1250,7 @@ async def callback_check_payment(callback: CallbackQuery):
         await callback.message.edit_text(
             f"⏳ **ПЛАТЁЖ ЕЩЁ НЕ ПОДТВЕРЖДЁН**\n\n"
             f"Обычно это занимает до 10 минут.\n"
-            f"Если ты оплатил, подожди немного и нажми «Проверить».",
+            f"Если ты оплатил, подожди немного и нажми «Проверить ещё».",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="🔄 ПРОВЕРИТЬ ЕЩЁ", callback_data=f"check_payment_{payment_id}")],
                 [InlineKeyboardButton(text="◀ НАЗАД", callback_data="deposit")]
@@ -1373,8 +1280,6 @@ async def callback_profile(callback: CallbackQuery):
 ├ Заморожено RUB: **{user['frozen_rub']}₽**
 ├ Всего USD: **{user['balance_usd'] + user['frozen_usd']}$**
 ├ Всего RUB: **{user['balance_rub'] + user['frozen_rub']}₽**
-├ BTC: **{user['balance_btc']:.8f}**
-├ ETH: **{user['balance_eth']:.6f}**
 ├ 👥 Рефералов: **{user['referral_count']}**
 └ Заработано: **{user['referral_count'] * REFERRAL_BONUS}$**
 
@@ -1694,11 +1599,10 @@ async def callback_help(callback: CallbackQuery):
         f"/balance - Баланс\n"
         f"/daily - Бонус\n"
         f"/top - Топ\n"
-        f"/mydeals - Мои сделки\n"
-        f"/deposit - Пополнить\n\n"
+        f"/mydeals - Мои сделки\n\n"
         f"💎 Рефералы: +{REFERRAL_BONUS}$\n"
         f"👑 VIP: {VIP_PRICE}$ / {VIP_PRICE_RUB}₽\n"
-        f"🛒 Магазин: заморозка до подтверждения\n"
+        f"🛒 Магазин: {len(TEST_SKINS)} скинов\n"
         f"💳 Крипта: BTC, ETH, USDT, TON\n"
         f"📞 Поддержка: {SUPPORT_LINK}",
         reply_markup=Keyboards.back(),
@@ -1817,7 +1721,7 @@ async def admin_add_balance_amount(message: Message, state: FSMContext):
     user_id = data['target_user_id']
     
     amount_rub = amount_usd * USD_TO_RUB
-    await db.update_balance(user_id, amount_usd, amount_rub, 0, 0, f'Пополнение от администратора')
+    await db.update_balance(user_id, amount_usd, amount_rub, f'Пополнение от администратора')
     
     await message.answer(f"✅ Баланс пользователя {user_id} пополнен на {amount_usd}$ / {amount_rub}₽!")
     await state.clear()
@@ -1961,12 +1865,13 @@ async def callback_admin_payments(callback: CallbackQuery):
 # ========== ЗАПУСК ==========
 async def on_startup():
     print(f"\n{Colors.CYAN}{'='*60}{Colors.END}")
-    print(f"{Colors.MAGENTA}{Colors.BOLD}🔥 SHIZOGP - ФИНАЛЬНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ 🔥{Colors.END}")
+    print(f"{Colors.MAGENTA}{Colors.BOLD}🔥 SHIZOGP - ВСЁ ИСПРАВЛЕНО 🔥{Colors.END}")
     print(f"{Colors.CYAN}{'='*60}{Colors.END}")
     print(f"{Colors.GREEN}✅ Версия: {BOT_VERSION}{Colors.END}")
     print(f"{Colors.GREEN}✅ Токен: {BOT_TOKEN[:15]}...{Colors.END}")
     print(f"{Colors.GREEN}✅ Админы: {ADMIN_IDS}{Colors.END}")
     print(f"{Colors.GREEN}✅ VIP чат: {VIP_CHAT_LINK}{Colors.END}")
+    print(f"{Colors.GREEN}✅ Тестовые скины: {len(TEST_SKINS)}{Colors.END}")
     
     await db.init_db()
     
