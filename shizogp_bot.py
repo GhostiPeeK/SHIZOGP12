@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🔥 SHIZOGP - P2P ЭСКРОУ БОТ С ТИКЕТАМИ
-✅ Выставление скинов
-✅ Тикеты в канал
-✅ Оплата через @CryptoBot
-✅ Чат покупателя и продавца
-✅ Эскроу + Арбитраж
+🔥 SHIZOGP - P2P ЭСКРОУ С ДВУСТОРОННИМ ПОДТВЕРЖДЕНИЕМ
+✅ Продавец подтверждает отправку
+✅ Покупатель подтверждает получение
+✅ Деньги размораживаются только после 2х подтверждений
 """
 
 import os
@@ -15,7 +13,6 @@ import asyncio
 import logging
 import random
 import string
-import json
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Any
 
@@ -52,9 +49,10 @@ SUPPORT_LINK = os.getenv('SUPPORT_LINK', 'https://t.me/SHIZOGP_support')
 PLATFORM_FEE = 0.5  # 0.5% комиссия
 MIN_PRICE = 10  # Минимальная цена в USDT
 MAX_PRICE = 10000  # Максимальная цена
+ESCROW_TIME_LIMIT = 48  # Лимит времени на сделку (часы)
 
 DATABASE_PATH = "shizogp.db"
-BOT_VERSION = "15.0 (P2P ЭСКРОУ + ТИКЕТЫ)"
+BOT_VERSION = "16.0 (ДВУСТОРОННЕЕ ПОДТВЕРЖДЕНИЕ)"
 BOT_NAME = "SHIZOGP"
 
 # ========== ЛОГИРОВАНИЕ ==========
@@ -145,7 +143,7 @@ class Database:
                 )
             ''')
             
-            # Сделки
+            # Сделки с двусторонним подтверждением
             await db.execute('''
                 CREATE TABLE IF NOT EXISTS deals (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -157,19 +155,20 @@ class Database:
                     seller_gets REAL,
                     status TEXT DEFAULT 'pending',  -- pending, paid, shipped, completed, dispute
                     crypto_invoice_id INTEGER,
-                    escrow_hold_id INTEGER,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     paid_at TEXT,
+                    shipped_at TEXT,
                     completed_at TEXT,
                     dispute_reason TEXT,
                     dispute_opened_by INTEGER,
+                    expires_at TEXT,
                     FOREIGN KEY (listing_id) REFERENCES listings (id),
                     FOREIGN KEY (seller_id) REFERENCES users (user_id),
                     FOREIGN KEY (buyer_id) REFERENCES users (user_id)
                 )
             ''')
             
-            # Сообщения чата (для сделок)
+            # Сообщения чата
             await db.execute('''
                 CREATE TABLE IF NOT EXISTS deal_messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -266,11 +265,12 @@ class Database:
             
             fee = listing['price_usdt'] * PLATFORM_FEE / 100
             seller_gets = listing['price_usdt'] - fee
+            expires_at = (datetime.now() + timedelta(hours=ESCROW_TIME_LIMIT)).isoformat()
             
             cursor = await db.execute('''
-                INSERT INTO deals (listing_id, seller_id, buyer_id, price_usdt, fee, seller_gets, crypto_invoice_id, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (listing_id, listing['seller_id'], buyer_id, listing['price_usdt'], fee, seller_gets, invoice_id, 'pending'))
+                INSERT INTO deals (listing_id, seller_id, buyer_id, price_usdt, fee, seller_gets, crypto_invoice_id, status, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (listing_id, listing['seller_id'], buyer_id, listing['price_usdt'], fee, seller_gets, invoice_id, 'pending', expires_at))
             await db.commit()
             
             # Обновляем статус лота
@@ -332,9 +332,69 @@ class Database:
             elif purpose == 'payment' and deal_id:
                 # Оплата сделки - замораживаем на эскроу
                 await db.execute('UPDATE users SET frozen_usdt = frozen_usdt + ? WHERE user_id = ?', (amount, user_id))
-                await db.execute('UPDATE deals SET status = ? WHERE id = ?', ('paid', deal_id))
+                paid_at = datetime.now().isoformat()
+                await db.execute('UPDATE deals SET status = ?, paid_at = ? WHERE id = ?', ('paid', paid_at, deal_id))
             
             await db.execute('UPDATE crypto_payments SET status = ?, confirmed_at = CURRENT_TIMESTAMP WHERE invoice_id = ?', ('confirmed', invoice_id))
+            await db.commit()
+            return True
+
+    async def confirm_shipped(self, deal_id: int) -> bool:
+        """Продавец подтверждает отправку"""
+        async with aiosqlite.connect(self.db_path) as db:
+            shipped_at = datetime.now().isoformat()
+            await db.execute('UPDATE deals SET status = ?, shipped_at = ? WHERE id = ?', ('shipped', shipped_at, deal_id))
+            await db.commit()
+            return True
+
+    async def confirm_received(self, deal_id: int) -> bool:
+        """Покупатель подтверждает получение и завершает сделку"""
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute('SELECT seller_id, seller_gets, price_usdt FROM deals WHERE id = ? AND status = ?', (deal_id, 'shipped'))
+            deal = await cursor.fetchone()
+            
+            if not deal:
+                return False
+            
+            seller_id, seller_gets, price = deal
+            
+            # Переводим деньги продавцу (за вычетом комиссии)
+            await db.execute('UPDATE users SET frozen_usdt = frozen_usdt - ?, balance_usdt = balance_usdt + ? WHERE user_id = ?', (price, seller_gets, seller_id))
+            
+            # Обновляем статус сделки
+            completed_at = datetime.now().isoformat()
+            await db.execute('UPDATE deals SET status = ?, completed_at = ? WHERE id = ?', ('completed', completed_at, deal_id))
+            
+            # Обновляем статистику
+            await db.execute('UPDATE users SET total_trades = total_trades + 1, successful_trades = successful_trades + 1 WHERE user_id = ?', (seller_id,))
+            await db.execute('UPDATE users SET total_trades = total_trades + 1, successful_trades = successful_trades + 1 WHERE user_id = ?', (deal[3] if len(deal) > 3 else 0,))
+            
+            await db.commit()
+            return True
+
+    async def cancel_deal_expired(self, deal_id: int) -> bool:
+        """Отмена просроченной сделки"""
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute('SELECT buyer_id, price_usdt FROM deals WHERE id = ? AND status IN (?, ?)', (deal_id, 'paid', 'pending'))
+            deal = await cursor.fetchone()
+            
+            if not deal:
+                return False
+            
+            buyer_id, price = deal
+            
+            # Возвращаем деньги покупателю
+            await db.execute('UPDATE users SET frozen_usdt = frozen_usdt - ?, balance_usdt = balance_usdt + ? WHERE user_id = ?', (price, price, buyer_id))
+            
+            # Отменяем сделку
+            await db.execute('UPDATE deals SET status = ? WHERE id = ?', ('cancelled', deal_id))
+            
+            # Возвращаем лот в продажу
+            await db.execute('''
+                UPDATE listings SET status = 'active' 
+                WHERE id = (SELECT listing_id FROM deals WHERE id = ?)
+            ''', (deal_id,))
+            
             await db.commit()
             return True
 
@@ -355,29 +415,6 @@ class Database:
             ''', (deal_id,))
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
-
-    async def complete_deal(self, deal_id: int) -> bool:
-        async with aiosqlite.connect(self.db_path) as db:
-            cursor = await db.execute('SELECT seller_id, seller_gets, price_usdt FROM deals WHERE id = ? AND status = ?', (deal_id, 'paid'))
-            deal = await cursor.fetchone()
-            
-            if not deal:
-                return False
-            
-            seller_id, seller_gets, price = deal
-            
-            # Переводим деньги продавцу (за вычетом комиссии)
-            await db.execute('UPDATE users SET frozen_usdt = frozen_usdt - ?, balance_usdt = balance_usdt + ? WHERE user_id = ?', (price, seller_gets, seller_id))
-            
-            # Обновляем статус сделки
-            await db.execute('UPDATE deals SET status = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?', ('completed', deal_id))
-            
-            # Обновляем статистику пользователей
-            await db.execute('UPDATE users SET total_trades = total_trades + 1, successful_trades = successful_trades + 1 WHERE user_id = ?', (seller_id,))
-            await db.execute('UPDATE users SET total_trades = total_trades + 1, successful_trades = successful_trades + 1 WHERE user_id = ?', (deal[4] if len(deal) > 4 else 0,))
-            
-            await db.commit()
-            return True
 
     async def dispute_deal(self, deal_id: int, user_id: int, reason: str) -> bool:
         async with aiosqlite.connect(self.db_path) as db:
@@ -409,6 +446,18 @@ class Database:
             await db.commit()
             return True
 
+    async def get_expired_deals(self) -> List[Dict]:
+        """Получить просроченные сделки"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute('''
+                SELECT id FROM deals 
+                WHERE status IN ('paid', 'pending') 
+                AND expires_at < ?
+            ''', (datetime.now().isoformat(),))
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
     async def get_stats(self) -> Dict:
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute('SELECT COUNT(*) FROM users')
@@ -426,12 +475,16 @@ class Database:
             cursor = await db.execute('SELECT SUM(fee) FROM deals WHERE status = ?', ('completed',))
             fees = (await cursor.fetchone())[0] or 0
             
+            cursor = await db.execute('SELECT COUNT(*) FROM deals WHERE status = ?', ('dispute',))
+            disputes = (await cursor.fetchone())[0]
+            
             return {
                 'users': users,
                 'active_listings': active_listings,
                 'total_deals': total_deals,
                 'volume': volume,
-                'fees': fees
+                'fees': fees,
+                'disputes': disputes
             }
 
 # ========== ИНИЦИАЛИЗАЦИЯ ==========
@@ -478,13 +531,20 @@ class Keyboards:
     def deal_actions(deal_id: int, user_id: int, deal: Dict) -> InlineKeyboardMarkup:
         buttons = []
         
+        # Кнопки в зависимости от статуса и роли
         if deal['status'] == 'paid':
             if deal['seller_id'] == user_id:
-                buttons.append([InlineKeyboardButton(text="✅ ПОДТВЕРДИТЬ ПОЛУЧЕНИЕ ОПЛАТЫ", callback_data=f"deal_confirm_{deal_id}")])
-            if deal['buyer_id'] == user_id or deal['seller_id'] == user_id:
-                buttons.append([InlineKeyboardButton(text="💬 НАПИСАТЬ", callback_data=f"deal_message_{deal_id}")])
+                buttons.append([InlineKeyboardButton(text="📦 Я ОТПРАВИЛ СКИН", callback_data=f"deal_shipped_{deal_id}")])
         
-        if deal['status'] != 'completed' and deal['status'] != 'dispute':
+        elif deal['status'] == 'shipped':
+            if deal['buyer_id'] == user_id:
+                buttons.append([InlineKeyboardButton(text="✅ ПОДТВЕРДИТЬ ПОЛУЧЕНИЕ", callback_data=f"deal_received_{deal_id}")])
+        
+        # Кнопка чата всегда доступна
+        buttons.append([InlineKeyboardButton(text="💬 ЧАТ СДЕЛКИ", callback_data=f"deal_message_{deal_id}")])
+        
+        # Кнопка спора (кроме завершённых)
+        if deal['status'] not in ['completed', 'dispute']:
             buttons.append([InlineKeyboardButton(text="⚠️ ОТКРЫТЬ СПОР", callback_data=f"deal_dispute_{deal_id}")])
         
         buttons.append([InlineKeyboardButton(text="◀ НАЗАД", callback_data="my_deals")])
@@ -522,7 +582,7 @@ async def cmd_start(message: Message):
         f"💰 Баланс: **{user['balance_usdt']:.2f}** USDT\n"
         f"🔒 Заморожено: **{user['frozen_usdt']:.2f}** USDT\n"
         f"📊 Сделок: **{user['total_trades']}** (✅ {user['successful_trades']})\n\n"
-        f"⚡ P2P-платформа с гарантом\n"
+        f"⚡ P2P-платформа с двусторонним подтверждением\n"
         f"💸 Покупай и продавай безопасно!",
         reply_markup=Keyboards.main(),
         parse_mode="Markdown"
@@ -533,20 +593,6 @@ async def cmd_menu(message: Message):
     await message.answer(
         "📋 **ГЛАВНОЕ МЕНЮ**",
         reply_markup=Keyboards.main(),
-        parse_mode="Markdown"
-    )
-
-@dp.message(Command("balance"))
-async def cmd_balance(message: Message):
-    user_id = message.from_user.id
-    user = await db.get_user(user_id)
-    
-    await message.answer(
-        f"💰 **ТВОЙ БАЛАНС**\n\n"
-        f"Доступно: **{user['balance_usdt']:.2f}** USDT\n"
-        f"Заморожено: **{user['frozen_usdt']:.2f}** USDT\n\n"
-        f"💳 Пополнить можно через раздел КРИПТО",
-        reply_markup=Keyboards.back(),
         parse_mode="Markdown"
     )
 
@@ -717,12 +763,6 @@ async def callback_buy_listing(callback: CallbackQuery):
         await callback.answer("❌ Нельзя купить свой лот!", show_alert=True)
         return
     
-    # Проверяем баланс
-    user = await db.get_user(buyer_id)
-    if user['balance_usdt'] < listing['price_usdt']:
-        await callback.answer(f"❌ Недостаточно USDT! Нужно {listing['price_usdt']} USDT", show_alert=True)
-        return
-    
     # Создаём счёт в Crypto Pay для оплаты
     inv = await crypto.create_invoice(listing['price_usdt'], 'USDT', f"Оплата лота #{listing_id}")
     
@@ -771,20 +811,15 @@ async def callback_check_deal_payment(callback: CallbackQuery):
         # Подтверждаем оплату
         await db.confirm_crypto_payment(deal['crypto_invoice_id'])
         
-        # Обновляем статус сделки
-        async with aiosqlite.connect(DATABASE_PATH) as conn:
-            await conn.execute('UPDATE deals SET status = ? WHERE id = ?', ('paid', deal_id))
-            await conn.commit()
-        
         # Уведомляем продавца
         try:
             await bot.send_message(
                 deal['seller_id'],
-                f"✅ **Ваш лот #{deal['listing_id']} купили!**\n\n"
+                f"💰 **Лот #{deal['listing_id']} оплачен!**\n\n"
                 f"🎯 Скин: {deal['skin_name']}\n"
                 f"💰 Сумма заморожена: {deal['price_usdt']} USDT\n\n"
-                f"📞 Свяжитесь с покупателем для передачи скина.\n"
-                f"После передачи нажмите «ПОДТВЕРДИТЬ».",
+                f"📞 Свяжитесь с покупателем (@{deal['buyer_name']}) для передачи скина.\n"
+                f"✅ **После отправки нажми «📦 Я ОТПРАВИЛ»**",
                 reply_markup=Keyboards.main()
             )
         except:
@@ -792,13 +827,78 @@ async def callback_check_deal_payment(callback: CallbackQuery):
         
         await callback.message.edit_text(
             f"✅ **ОПЛАЧЕНО!**\n\n"
-            f"Средства заморожены.\n"
+            f"Средства заморожены на эскроу.\n"
             f"Свяжитесь с продавцом: @{deal['seller_name']}\n\n"
             f"После получения скина подтвердите сделку.",
             reply_markup=Keyboards.main()
         )
     else:
         await callback.answer("⏳ Оплата ещё не поступила", show_alert=True)
+
+# ========== ДВУСТОРОННЕЕ ПОДТВЕРЖДЕНИЕ ==========
+@dp.callback_query(F.data.startswith("deal_shipped_"))
+async def callback_deal_shipped(callback: CallbackQuery):
+    """Продавец подтверждает отправку"""
+    deal_id = int(callback.data.replace("deal_shipped_", ""))
+    user_id = callback.from_user.id
+    deal = await db.get_deal(deal_id)
+    
+    if not deal or deal['status'] != 'paid' or deal['seller_id'] != user_id:
+        await callback.answer("❌ Нельзя подтвердить отправку", show_alert=True)
+        return
+    
+    # Подтверждаем отправку
+    await db.confirm_shipped(deal_id)
+    
+    # Уведомляем покупателя
+    try:
+        await bot.send_message(
+            deal['buyer_id'],
+            f"📦 **Сделка #{deal_id}**\n\n"
+            f"Продавец @{deal['seller_name']} отметил, что отправил скин!\n\n"
+            f"✅ **После получения нажми «ПОДТВЕРДИТЬ ПОЛУЧЕНИЕ»**",
+            reply_markup=Keyboards.main()
+        )
+    except:
+        pass
+    
+    await callback.message.edit_text(
+        f"✅ **Товар отмечен как отправленный!**\n\n"
+        f"Ожидайте подтверждения от покупателя.",
+        reply_markup=Keyboards.main()
+    )
+
+@dp.callback_query(F.data.startswith("deal_received_"))
+async def callback_deal_received(callback: CallbackQuery):
+    """Покупатель подтверждает получение"""
+    deal_id = int(callback.data.replace("deal_received_", ""))
+    user_id = callback.from_user.id
+    deal = await db.get_deal(deal_id)
+    
+    if not deal or deal['status'] != 'shipped' or deal['buyer_id'] != user_id:
+        await callback.answer("❌ Нельзя подтвердить получение", show_alert=True)
+        return
+    
+    # Завершаем сделку
+    await db.confirm_received(deal_id)
+    
+    # Уведомляем продавца
+    try:
+        await bot.send_message(
+            deal['seller_id'],
+            f"✅ **Сделка #{deal_id} завершена!**\n\n"
+            f"Покупатель @{deal['buyer_name']} подтвердил получение скина.\n"
+            f"💰 Деньги ({deal['seller_gets']:.2f} USDT) зачислены на твой баланс!",
+            reply_markup=Keyboards.main()
+        )
+    except:
+        pass
+    
+    await callback.message.edit_text(
+        f"✅ **Сделка #{deal_id} успешно завершена!**\n\n"
+        f"Спасибо за покупку!",
+        reply_markup=Keyboards.main()
+    )
 
 # ========== СДЕЛКИ ==========
 @dp.callback_query(F.data == "my_deals")
@@ -821,7 +921,7 @@ async def callback_my_deals(callback: CallbackQuery):
         role = "Продавец" if d['seller_id'] == user_id else "Покупатель"
         status_emoji = {
             'pending': '⏳', 'paid': '💰', 'shipped': '📦',
-            'completed': '✅', 'dispute': '⚠️'
+            'completed': '✅', 'dispute': '⚠️', 'cancelled': '❌'
         }.get(d['status'], '⏳')
         
         text += f"{status_emoji} **Сделка #{d['id']}**\n"
@@ -847,41 +947,49 @@ async def callback_view_deal(callback: CallbackQuery):
         return
     
     role = "Продавец" if deal['seller_id'] == user_id else "Покупатель"
-    other_id = deal['seller_id'] if role == "Покупатель" else deal['buyer_id']
     
     status_text = {
         'pending': '⏳ Ожидает оплаты',
-        'paid': '💰 Оплачено (ожидает передачи)',
-        'shipped': '📦 Отправлено',
+        'paid': '💰 Оплачено (ожидает отправки)',
+        'shipped': '📦 Отправлено (ожидает подтверждения)',
         'completed': '✅ Завершено',
-        'dispute': '⚠️ Спор'
+        'dispute': '⚠️ Спор',
+        'cancelled': '❌ Отменено'
     }.get(deal['status'], deal['status'])
+    
+    time_info = ""
+    if deal['status'] in ['paid', 'shipped'] and deal['expires_at']:
+        expires = datetime.fromisoformat(deal['expires_at'])
+        remaining = expires - datetime.now()
+        if remaining.total_seconds() > 0:
+            hours = int(remaining.total_seconds() // 3600)
+            minutes = int((remaining.total_seconds() % 3600) // 60)
+            time_info = f"⏱ Осталось: {hours}ч {minutes}м\n"
     
     text = f"📋 **СДЕЛКА #{deal_id}**\n\n"
     text += f"🎯 **Скин:** {deal['skin_name']} ({deal['skin_quality']})\n"
     text += f"💰 **Цена:** {deal['price_usdt']} USDT\n"
     text += f"👤 **Твоя роль:** {role}\n"
     text += f"👥 **Оппонент:** @{deal['seller_name'] if role == 'Покупатель' else deal['buyer_name']}\n"
-    text += f"🔄 **Статус:** {status_text}\n\n"
+    text += f"🔄 **Статус:** {status_text}\n"
+    text += time_info
     
     if deal['status'] == 'completed':
         text += f"💸 **Продавец получил:** {deal['seller_gets']:.2f} USDT\n"
         text += f"📊 **Комиссия:** {deal['fee']:.2f} USDT\n"
-        text += f"✅ Завершена: {deal['completed_at'][:16]}\n\n"
+        if deal['completed_at']:
+            text += f"✅ Завершена: {deal['completed_at'][:16]}\n"
     
     if deal['status'] == 'dispute':
         text += f"⚠️ **Причина спора:** {deal['dispute_reason']}\n"
-        text += f"👤 Открыл: {'Продавец' if deal['dispute_opened_by'] == deal['seller_id'] else 'Покупатель'}\n\n"
-    
-    text += f"💬 **Чат сделки:**"
+        text += f"👤 Открыл: {'Продавец' if deal['dispute_opened_by'] == deal['seller_id'] else 'Покупатель'}\n"
     
     # Получаем сообщения
     messages = await db.get_deal_messages(deal_id)
     if messages:
-        for m in messages[-5:]:  # последние 5
+        text += f"\n💬 **Последние сообщения:**"
+        for m in messages[-3:]:
             text += f"\n👤 @{m['username']}: {m['message']}"
-    else:
-        text += "\nНет сообщений"
     
     await callback.message.edit_text(
         text,
@@ -921,37 +1029,6 @@ async def deal_message_send(message: Message, state: FSMContext):
     
     await message.answer("✅ Сообщение отправлено!")
     await state.clear()
-
-@dp.callback_query(F.data.startswith("deal_confirm_"))
-async def callback_deal_confirm(callback: CallbackQuery):
-    deal_id = int(callback.data.replace("deal_confirm_", ""))
-    user_id = callback.from_user.id
-    deal = await db.get_deal(deal_id)
-    
-    if not deal or deal['status'] != 'paid' or deal['seller_id'] != user_id:
-        await callback.answer("❌ Нельзя подтвердить", show_alert=True)
-        return
-    
-    # Завершаем сделку
-    await db.complete_deal(deal_id)
-    
-    # Уведомляем покупателя
-    try:
-        await bot.send_message(
-            deal['buyer_id'],
-            f"✅ **Сделка #{deal_id} завершена!**\n\n"
-            f"Продавец подтвердил получение оплаты.\n"
-            f"Спасибо за покупку!",
-            reply_markup=Keyboards.main()
-        )
-    except:
-        pass
-    
-    await callback.message.edit_text(
-        f"✅ **Сделка #{deal_id} завершена!**\n\n"
-        f"Деньги ({deal['seller_gets']:.2f} USDT) зачислены на твой баланс.",
-        reply_markup=Keyboards.main()
-    )
 
 @dp.callback_query(F.data.startswith("deal_dispute_"))
 async def callback_deal_dispute(callback: CallbackQuery, state: FSMContext):
@@ -1081,7 +1158,8 @@ async def cmd_admin(message: Message):
     text += f"├ 🛒 Активных лотов: {stats['active_listings']}\n"
     text += f"├ 💳 Всего сделок: {stats['total_deals']}\n"
     text += f"├ 💰 Объём: {stats['volume']:.2f} USDT\n"
-    text += f"└ 💸 Комиссий собрано: {stats['fees']:.2f} USDT"
+    text += f"├ 💸 Комиссий собрано: {stats['fees']:.2f} USDT\n"
+    text += f"└ ⚠️ Активных споров: {stats['disputes']}"
     
     await message.answer(text, reply_markup=Keyboards.admin(), parse_mode="Markdown")
 
@@ -1099,7 +1177,8 @@ async def callback_admin_stats(callback: CallbackQuery):
     text += f"💳 **Всего сделок:** {stats['total_deals']}\n"
     text += f"💰 **Объём:** {stats['volume']:.2f} USDT\n"
     text += f"💸 **Комиссии:** {stats['fees']:.2f} USDT\n"
-    text += f"📈 **Средняя комиссия:** {stats['fees']/max(stats['total_deals'],1):.2f} USDT"
+    text += f"📈 **Средняя комиссия:** {stats['fees']/max(stats['total_deals'],1):.2f} USDT\n"
+    text += f"⚠️ **Споры:** {stats['disputes']}"
     
     await callback.message.edit_text(text, reply_markup=Keyboards.admin(), parse_mode="Markdown")
 
@@ -1202,6 +1281,20 @@ async def callback_dispute_winner(callback: CallbackQuery):
         reply_markup=Keyboards.admin()
     )
 
+# ========== ФОНОВАЯ ЗАДАЧА ДЛЯ ПРОСРОЧЕННЫХ СДЕЛОК ==========
+async def check_expired_deals():
+    """Проверка просроченных сделок каждый час"""
+    while True:
+        try:
+            expired = await db.get_expired_deals()
+            for d in expired:
+                await db.cancel_deal_expired(d['id'])
+                logger.info(f"Сделка #{d['id']} отменена по таймауту")
+            await asyncio.sleep(3600)  # Каждый час
+        except Exception as e:
+            logger.error(f"Ошибка в check_expired_deals: {e}")
+            await asyncio.sleep(3600)
+
 # ========== ПОМОЩЬ ==========
 @dp.callback_query(F.data == "help")
 async def callback_help(callback: CallbackQuery):
@@ -1212,20 +1305,21 @@ async def callback_help(callback: CallbackQuery):
 1. Нажми «КУПИТЬ» → выбери лот
 2. Оплати через @CryptoBot
 3. Деньги заморозятся (эскроу)
-4. Свяжись с продавцом
-5. Получи скин → подтверди
+4. После отправки скина продавцом подтверди получение
+5. Деньги уйдут продавцу
 
 📌 **Как продать:**
 1. Нажми «ПРОДАТЬ» → заполни данные
 2. Лот появится в канале
-3. Покупатель оплатит
-4. Отправь скин → подтверди
-5. Получишь деньги (минус {PLATFORM_FEE}%)
+3. После оплаты отметь «📦 ОТПРАВЛЕНО»
+4. Получишь деньги после подтверждения покупателем
 
 📌 **Безопасность:**
-✅ Деньги на эскроу
+✅ Деньги на эскроу до подтверждения
+✅ Двустороннее подтверждение
 ✅ Чат внутри сделки
 ✅ Арбитраж при спорах
+⏱ Сделка отменяется через {ESCROW_TIME_LIMIT} часов бездействия
 
 📞 Поддержка: {SUPPORT_LINK}
     """
@@ -1249,15 +1343,19 @@ async def callback_main_menu(callback: CallbackQuery):
 # ========== ЗАПУСК ==========
 async def on_startup():
     print(f"\n{Colors.CYAN}{'='*60}{Colors.END}")
-    print(f"{Colors.MAGENTA}{Colors.BOLD}🔥 SHIZOGP P2P ЭСКРОУ БОТ 🔥{Colors.END}")
+    print(f"{Colors.MAGENTA}{Colors.BOLD}🔥 SHIZOGP - ДВУСТОРОННЕЕ ПОДТВЕРЖДЕНИЕ 🔥{Colors.END}")
     print(f"{Colors.CYAN}{'='*60}{Colors.END}")
     print(f"{Colors.GREEN}✅ Версия: {BOT_VERSION}{Colors.END}")
     print(f"{Colors.GREEN}✅ Токен: {BOT_TOKEN[:15]}...{Colors.END}")
     print(f"{Colors.GREEN}✅ Админы: {ADMIN_IDS}{Colors.END}")
     print(f"{Colors.GREEN}✅ Канал: {CHANNEL_LINK}{Colors.END}")
     print(f"{Colors.GREEN}✅ Комиссия: {PLATFORM_FEE}%{Colors.END}")
+    print(f"{Colors.GREEN}✅ Таймаут сделки: {ESCROW_TIME_LIMIT}ч{Colors.END}")
     
     await db.init_db()
+    
+    # Запускаем фоновую задачу
+    asyncio.create_task(check_expired_deals())
     
     me = await bot.get_me()
     print(f"{Colors.GREEN}✅ Бот: @{me.username}{Colors.END}")
