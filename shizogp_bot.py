@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🔥 SHIZOGP - P2P ЭСКРОУ С ДВУСТОРОННИМ ПОДТВЕРЖДЕНИЕМ
-✅ Продавец подтверждает отправку
-✅ Покупатель подтверждает получение
-✅ Деньги размораживаются только после 2х подтверждений
+🔥 SHIZOGP - P2P ЭСКРОУ С ТИКЕТАМИ В КАНАЛ
+✅ ID канала: -1003523356426
+✅ Двустороннее подтверждение
+✅ Тикеты работают
 """
 
 import os
@@ -42,17 +42,17 @@ except ImportError:
 BOT_TOKEN = os.getenv('BOT_TOKEN', '8498694285:AAG3Ezx7BDGciUIYAAb4UHMtFUmBYvock3w')
 CRYPTOPAY_TOKEN = '540261:AAzd4sQW2mo4I8UdxardSygAc3H3CSZbZBs'
 ADMIN_IDS = [int(x) for x in os.getenv('ADMIN_IDS', '2091630272,1760627021').split(',') if x]
-CHANNEL_LINK = os.getenv('CHANNEL_LINK', 'https://t.me/+borSYGXUlKFkM2Yy')
+CHANNEL_ID = -1003523356426  # ТВОЙ ID КАНАЛА (без кавычек!)
 SUPPORT_LINK = os.getenv('SUPPORT_LINK', 'https://t.me/SHIZOGP_support')
 
 # Настройки платформы
-PLATFORM_FEE = 0.5  # 0.5% комиссия
-MIN_PRICE = 10  # Минимальная цена в USDT
-MAX_PRICE = 10000  # Максимальная цена
-ESCROW_TIME_LIMIT = 48  # Лимит времени на сделку (часы)
+PLATFORM_FEE = 0.5
+MIN_PRICE = 10
+MAX_PRICE = 10000
+ESCROW_TIME_LIMIT = 48
 
 DATABASE_PATH = "shizogp.db"
-BOT_VERSION = "16.0 (ДВУСТОРОННЕЕ ПОДТВЕРЖДЕНИЕ)"
+BOT_VERSION = "18.0 (ТВОЙ КАНАЛ)"
 BOT_NAME = "SHIZOGP"
 
 # ========== ЛОГИРОВАНИЕ ==========
@@ -136,14 +136,14 @@ class Database:
                     price_usdt REAL,
                     description TEXT,
                     photo_id TEXT,
-                    status TEXT DEFAULT 'active',  -- active, sold, cancelled
+                    status TEXT DEFAULT 'active',
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     channel_message_id INTEGER,
                     FOREIGN KEY (seller_id) REFERENCES users (user_id)
                 )
             ''')
             
-            # Сделки с двусторонним подтверждением
+            # Сделки
             await db.execute('''
                 CREATE TABLE IF NOT EXISTS deals (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -153,7 +153,7 @@ class Database:
                     price_usdt REAL,
                     fee REAL,
                     seller_gets REAL,
-                    status TEXT DEFAULT 'pending',  -- pending, paid, shipped, completed, dispute
+                    status TEXT DEFAULT 'pending',
                     crypto_invoice_id INTEGER,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     paid_at TEXT,
@@ -188,7 +188,7 @@ class Database:
                     invoice_id INTEGER UNIQUE,
                     amount_usdt REAL,
                     asset TEXT,
-                    purpose TEXT,  -- 'deposit', 'payment'
+                    purpose TEXT,
                     deal_id INTEGER,
                     status TEXT DEFAULT 'pending',
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -516,7 +516,7 @@ class Keyboards:
             [InlineKeyboardButton(text="💸 ПРОДАТЬ", callback_data="sell_start")],
             [InlineKeyboardButton(text="📦 МОИ СДЕЛКИ", callback_data="my_deals")],
             [InlineKeyboardButton(text="💰 БАЛАНС", callback_data="balance")],
-            [InlineKeyboardButton(text="📢 КАНАЛ", url=CHANNEL_LINK)],
+            [InlineKeyboardButton(text="📢 КАНАЛ", url=f"https://t.me/SHIZOGP_CHANNEL")],
             [InlineKeyboardButton(text="ℹ️ ПОМОЩЬ", callback_data="help")]
         ]
         return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -531,7 +531,6 @@ class Keyboards:
     def deal_actions(deal_id: int, user_id: int, deal: Dict) -> InlineKeyboardMarkup:
         buttons = []
         
-        # Кнопки в зависимости от статуса и роли
         if deal['status'] == 'paid':
             if deal['seller_id'] == user_id:
                 buttons.append([InlineKeyboardButton(text="📦 Я ОТПРАВИЛ СКИН", callback_data=f"deal_shipped_{deal_id}")])
@@ -540,10 +539,8 @@ class Keyboards:
             if deal['buyer_id'] == user_id:
                 buttons.append([InlineKeyboardButton(text="✅ ПОДТВЕРДИТЬ ПОЛУЧЕНИЕ", callback_data=f"deal_received_{deal_id}")])
         
-        # Кнопка чата всегда доступна
         buttons.append([InlineKeyboardButton(text="💬 ЧАТ СДЕЛКИ", callback_data=f"deal_message_{deal_id}")])
         
-        # Кнопка спора (кроме завершённых)
         if deal['status'] not in ['completed', 'dispute']:
             buttons.append([InlineKeyboardButton(text="⚠️ ОТКРЫТЬ СПОР", callback_data=f"deal_dispute_{deal_id}")])
         
@@ -679,13 +676,15 @@ async def sell_photo(message: Message, state: FSMContext):
         ])
         
         if photo_id:
-            msg = await bot.send_photo(CHANNEL_LINK, photo_id, caption=text, reply_markup=keyboard, parse_mode="Markdown")
+            msg = await bot.send_photo(CHANNEL_ID, photo_id, caption=text, reply_markup=keyboard, parse_mode="Markdown")
         else:
-            msg = await bot.send_message(CHANNEL_LINK, text, reply_markup=keyboard, parse_mode="Markdown")
+            msg = await bot.send_message(CHANNEL_ID, text, reply_markup=keyboard, parse_mode="Markdown")
         
         await db.update_listing_channel_msg(listing_id, msg.message_id)
+        logger.info(f"✅ Тикет отправлен в канал {CHANNEL_ID}")
     except Exception as e:
-        logger.error(f"Ошибка отправки в канал: {e}")
+        logger.error(f"❌ Ошибка отправки в канал: {e}")
+        await message.answer(f"⚠️ Лот создан, но не удалось отправить в канал. Ошибка: {e}")
     
     await message.answer(
         f"✅ **Лот #{listing_id} создан!**\n\n"
@@ -838,7 +837,6 @@ async def callback_check_deal_payment(callback: CallbackQuery):
 # ========== ДВУСТОРОННЕЕ ПОДТВЕРЖДЕНИЕ ==========
 @dp.callback_query(F.data.startswith("deal_shipped_"))
 async def callback_deal_shipped(callback: CallbackQuery):
-    """Продавец подтверждает отправку"""
     deal_id = int(callback.data.replace("deal_shipped_", ""))
     user_id = callback.from_user.id
     deal = await db.get_deal(deal_id)
@@ -847,10 +845,8 @@ async def callback_deal_shipped(callback: CallbackQuery):
         await callback.answer("❌ Нельзя подтвердить отправку", show_alert=True)
         return
     
-    # Подтверждаем отправку
     await db.confirm_shipped(deal_id)
     
-    # Уведомляем покупателя
     try:
         await bot.send_message(
             deal['buyer_id'],
@@ -870,7 +866,6 @@ async def callback_deal_shipped(callback: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("deal_received_"))
 async def callback_deal_received(callback: CallbackQuery):
-    """Покупатель подтверждает получение"""
     deal_id = int(callback.data.replace("deal_received_", ""))
     user_id = callback.from_user.id
     deal = await db.get_deal(deal_id)
@@ -879,10 +874,8 @@ async def callback_deal_received(callback: CallbackQuery):
         await callback.answer("❌ Нельзя подтвердить получение", show_alert=True)
         return
     
-    # Завершаем сделку
     await db.confirm_received(deal_id)
     
-    # Уведомляем продавца
     try:
         await bot.send_message(
             deal['seller_id'],
@@ -984,7 +977,6 @@ async def callback_view_deal(callback: CallbackQuery):
         text += f"⚠️ **Причина спора:** {deal['dispute_reason']}\n"
         text += f"👤 Открыл: {'Продавец' if deal['dispute_opened_by'] == deal['seller_id'] else 'Покупатель'}\n"
     
-    # Получаем сообщения
     messages = await db.get_deal_messages(deal_id)
     if messages:
         text += f"\n💬 **Последние сообщения:**"
@@ -1014,7 +1006,6 @@ async def deal_message_send(message: Message, state: FSMContext):
     
     await db.add_deal_message(deal_id, message.from_user.id, message.text)
     
-    # Уведомляем оппонента
     deal = await db.get_deal(deal_id)
     opponent_id = deal['seller_id'] if deal['buyer_id'] == message.from_user.id else deal['buyer_id']
     
@@ -1049,7 +1040,6 @@ async def dispute_reason(message: Message, state: FSMContext):
     
     await db.dispute_deal(deal_id, user_id, message.text)
     
-    # Уведомляем админов
     deal = await db.get_deal(deal_id)
     for admin_id in ADMIN_IDS:
         try:
@@ -1261,7 +1251,6 @@ async def callback_dispute_winner(callback: CallbackQuery):
     
     await db.resolve_dispute(deal_id, winner_id)
     
-    # Уведомляем участников
     deal = await db.get_deal(deal_id)
     for uid in [deal['seller_id'], deal['buyer_id']]:
         try:
@@ -1283,14 +1272,13 @@ async def callback_dispute_winner(callback: CallbackQuery):
 
 # ========== ФОНОВАЯ ЗАДАЧА ДЛЯ ПРОСРОЧЕННЫХ СДЕЛОК ==========
 async def check_expired_deals():
-    """Проверка просроченных сделок каждый час"""
     while True:
         try:
             expired = await db.get_expired_deals()
             for d in expired:
                 await db.cancel_deal_expired(d['id'])
                 logger.info(f"Сделка #{d['id']} отменена по таймауту")
-            await asyncio.sleep(3600)  # Каждый час
+            await asyncio.sleep(3600)
         except Exception as e:
             logger.error(f"Ошибка в check_expired_deals: {e}")
             await asyncio.sleep(3600)
@@ -1304,9 +1292,7 @@ async def callback_help(callback: CallbackQuery):
 📌 **Как купить:**
 1. Нажми «КУПИТЬ» → выбери лот
 2. Оплати через @CryptoBot
-3. Деньги заморозятся (эскроу)
-4. После отправки скина продавцом подтверди получение
-5. Деньги уйдут продавцу
+3. После отправки скина продавцом подтверди получение
 
 📌 **Как продать:**
 1. Нажми «ПРОДАТЬ» → заполни данные
@@ -1315,11 +1301,11 @@ async def callback_help(callback: CallbackQuery):
 4. Получишь деньги после подтверждения покупателем
 
 📌 **Безопасность:**
-✅ Деньги на эскроу до подтверждения
+✅ Деньги на эскроу
 ✅ Двустороннее подтверждение
 ✅ Чат внутри сделки
 ✅ Арбитраж при спорах
-⏱ Сделка отменяется через {ESCROW_TIME_LIMIT} часов бездействия
+⏱ Таймаут: {ESCROW_TIME_LIMIT} часов
 
 📞 Поддержка: {SUPPORT_LINK}
     """
@@ -1343,24 +1329,22 @@ async def callback_main_menu(callback: CallbackQuery):
 # ========== ЗАПУСК ==========
 async def on_startup():
     print(f"\n{Colors.CYAN}{'='*60}{Colors.END}")
-    print(f"{Colors.MAGENTA}{Colors.BOLD}🔥 SHIZOGP - ДВУСТОРОННЕЕ ПОДТВЕРЖДЕНИЕ 🔥{Colors.END}")
+    print(f"{Colors.MAGENTA}{Colors.BOLD}🔥 SHIZOGP - ТВОЙ КАНАЛ ПОДКЛЮЧЁН 🔥{Colors.END}")
     print(f"{Colors.CYAN}{'='*60}{Colors.END}")
     print(f"{Colors.GREEN}✅ Версия: {BOT_VERSION}{Colors.END}")
     print(f"{Colors.GREEN}✅ Токен: {BOT_TOKEN[:15]}...{Colors.END}")
     print(f"{Colors.GREEN}✅ Админы: {ADMIN_IDS}{Colors.END}")
-    print(f"{Colors.GREEN}✅ Канал: {CHANNEL_LINK}{Colors.END}")
+    print(f"{Colors.GREEN}✅ Канал ID: {CHANNEL_ID}{Colors.END}")
     print(f"{Colors.GREEN}✅ Комиссия: {PLATFORM_FEE}%{Colors.END}")
-    print(f"{Colors.GREEN}✅ Таймаут сделки: {ESCROW_TIME_LIMIT}ч{Colors.END}")
     
     await db.init_db()
     
-    # Запускаем фоновую задачу
     asyncio.create_task(check_expired_deals())
     
     me = await bot.get_me()
     print(f"{Colors.GREEN}✅ Бот: @{me.username}{Colors.END}")
     print(f"{Colors.CYAN}{'='*60}{Colors.END}")
-    print(f"{Colors.YELLOW}{Colors.BOLD}🚀 БОТ ЗАПУЩЕН!{Colors.END}")
+    print(f"{Colors.YELLOW}{Colors.BOLD}🚀 БОТ ЗАПУЩЕН! ТИКЕТЫ ЛЕТЯТ В ТВОЙ КАНАЛ!{Colors.END}")
     print(f"{Colors.CYAN}{'='*60}{Colors.END}")
 
 async def main():
